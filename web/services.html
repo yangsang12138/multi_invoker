@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>调用项定义 — Multi-Service Invoker</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/style.css" />
+<script>/* 被 / 页用 iframe 嵌入时隐藏自带导航，避免重复 */
+if(window.self !== window.top) document.documentElement.classList.add("embed");</script>
+</head>
+<body>
+<header>
+  <h1>Multi-Service Invoker</h1>
+  <nav>
+    <a href="/">调用</a>
+    <a href="/services" class="on">调用项定义</a>
+    <a href="/platforms">节点列表</a>
+  </nav>
+</header>
+
+<main>
+  <div class="banner err" id="banner" hidden></div>
+
+  <div class="cols wide">
+    <section class="card" style="margin:0">
+      <h2>调用项
+        <span class="hint" id="svcCount"></span>
+        <span style="flex:1"></span>
+        <button class="btn" id="newService">+ 新建</button>
+      </h2>
+      <div class="svclist-actionbar">
+        <button class="btn" id="exportCsv">导出 CSV</button>
+        <button class="btn" id="exportJson">导出 JSON</button>
+        <button class="btn" id="tplCsv">CSV 模板</button>
+        <button class="btn" id="importCsv">导入 CSV</button>
+        <button class="btn" id="importJson">导入 JSON</button>
+      </div>
+      <input type="file" id="fileCsv" accept=".csv,text/csv" hidden />
+      <input type="file" id="fileJson" accept=".json,application/json" hidden />
+      <div class="svclist-toolbar">
+        <input type="text" id="svcFilter" placeholder="搜索编码 / 名称 / 标签" />
+        <select id="svcTag">
+          <option value="">全部分类</option>
+        </select>
+      </div>
+      <div class="svclist" id="svclist"></div>
+    </section>
+
+    <div>
+      <section class="card">
+        <h2 id="formTitle">调用项定义</h2>
+
+        <div class="form-actions">
+          <label class="form-actions-enabled"><input type="checkbox" id="enabled" checked /> 启用</label>
+          <span style="flex:1"></span>
+          <button class="btn" id="revert">放弃修改</button>
+          <button class="btn danger" id="delete">删除该调用项</button>
+          <button class="btn primary" id="save">保存调用项配置</button>
+        </div>
+
+        <div class="block">
+          <h3>基本信息</h3>
+          <div class="grid2">
+          <div class="field">
+            <label>调用项编码</label>
+            <input type="text" id="code" placeholder="" />
+          </div>
+          <div class="field">
+            <label>调用项名称</label>
+            <input type="text" id="name" placeholder="" />
+          </div>
+          <div class="field">
+            <label>请求方法</label>
+            <select id="method">
+              <option>POST</option><option>GET</option><option>PUT</option>
+              <option>DELETE</option><option>PATCH</option><option>HEAD</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>默认应用模块</label>
+            <input type="text" id="defaultModule" placeholder="" />
+          </div>
+          <div class="field" style="grid-column:1 / -1">
+            <label>分类标签（英文逗号分隔；第一个标签用于左侧分组）</label>
+            <div class="tags-cell" id="tagEditor">
+              <span class="add-tag" id="addTag">+ 标签</span>
+              <input type="text" id="tagInput" placeholder="输入后回车" style="display:none;width:120px;font-size:12px;padding:3px 6px" />
+            </div>
+            <input type="hidden" id="tags" />
+          </div>
+        </div>
+        </div>
+
+        <div class="block">
+          <h3>请求体
+            <span style="flex:1"></span>
+            <button class="btn" id="addField">+ 添加字段</button>
+            <div class="seg" id="bodyModeSeg">
+              <button data-mode="form" class="on">表格</button>
+              <button data-mode="json">JSON</button>
+            </div>
+          </h3>
+          <div id="fieldBox">
+            <div class="fieldtable"><table>
+              <thead><tr>
+                <th>字段名</th>
+                <th>默认值</th>
+                <th style="width:80px"></th>
+              </tr></thead>
+              <tbody id="fieldRows"></tbody>
+            </table></div>
+            <div class="hintline">运行时覆盖在「调用」页临时填，不会写回配置。</div>
+          </div>
+          <div id="jsonBox" hidden>
+            <div class="hintline">JSON 模式编辑会作为请求体原文保存；切回表格时若 JSON 是纯标量对象，会自动转回字段。</div>
+            <textarea id="body" rows="6" spellcheck="false"></textarea>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div class="field">
+              <label>请求体格式</label>
+              <select id="bodyFormat">
+                <option value="">跟随全局默认</option>
+                <option value="json">json → application/json</option>
+                <option value="form">form → application/x-www-form-urlencoded</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>回参
+            <span style="flex:1"></span>
+            <button class="btn" id="addResp">+ 添加回参</button>
+            <div class="seg" id="respModeSeg">
+              <button data-mode="table" class="on">表格</button>
+              <button data-mode="json">JSON</button>
+            </div>
+          </h3>
+          <div id="respTableBox">
+            <div class="fieldtable"><table>
+              <thead><tr>
+                <th>回参名称</th>
+                <th>说明</th>
+                <th style="width:78px">可取值</th>
+                <th style="width:148px">操作</th>
+              </tr></thead>
+              <tbody id="respRows"></tbody>
+            </table></div>
+            <div class="hintline">用「+ 子级」在当前行下挂一层，「◀ / ▶」调整归属；勾选「可取值」的会出现在调用页的取值下拉。</div>
+          </div>
+          <div id="respJsonBox" hidden>
+            <div class="hintline">粘贴示例响应（仅作参考，不直接进配置）：对象按层级展开成回参树，数组整体作为一条回参。</div>
+            <textarea id="respJson" rows="10" spellcheck="false"
+                      style="min-height:180px;width:100%;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.5"></textarea>
+            <div class="row" style="margin-top:8px">
+              <button class="btn primary" id="genResp">从示例生成回参</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>自定义请求头
+            <span style="flex:1"></span>
+            <button class="btn" id="addHeader">+ 添加请求头</button>
+            <div class="seg" id="hdrModeSeg">
+              <button data-mode="form" class="on">表格</button>
+              <button data-mode="json">JSON</button>
+            </div>
+          </h3>
+          <div id="hdrFieldBox">
+            <div class="fieldtable"><table>
+              <thead><tr>
+                <th>名称</th>
+                <th>值</th>
+                <th style="width:80px"></th>
+              </tr></thead>
+              <tbody id="hdrFieldRows"></tbody>
+            </table></div>
+          </div>
+          <div id="hdrJsonBox" hidden>
+            <textarea id="headers" rows="6" spellcheck="false"
+                      placeholder='{"X-Trace-Id": "trace"}'></textarea>
+          </div>
+        </div>
+
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<script src="/common.js"></script>
+<script>
+let DATA = null;
+let CURRENT_CODE = null;
+let CURRENT_FIELDS = [];
+let CURRENT_TAGS = [];
+let CURRENT_RESPONSES = [];
+let CURRENT_RESP_JSON_EXAMPLE = "";   // 最近一次粘贴的示例响应原文（仅作参考，不进配置）
+let CURRENT_RAW_BODY = null;          // 服务原有的 raw body（fields 表单未编辑时保留）
+let CURRENT_RAW_BODY_BY_PLATFORM = {};
+let BODY_MODE = "form";               // 请求体编辑器：form=表格 / json=JSON 原文
+let RESP_MODE = "table";              // 回参编辑器：table=多层级表格 / json=示例响应导入
+let CURRENT_HEADERS = [];             // 请求头：[{name, value}]
+let CURRENT_RAW_HEADERS = null;       // 当 JSON 模式不是合法 dict 时，原文保存
+let HDR_MODE = "form";                // 请求头编辑器：form=表格 / json=JSON 原文
+const $ = (id) => document.getElementById(id);
+
+function note(html, kind){ showNote($("banner"), html, kind || "ok"); }
+
+async function boot(){
+  DATA = await getJSON("/api/services");
+  renderTagOptions();
+  renderList();
+  if(DATA.services.length) loadService(DATA.services[0]);
+  else newService();
+  bind();
+}
+
+/* ----------------------------------------------- 服务列表 */
+function allTags(){
+  const set = new Set();
+  for(const s of DATA.services) for(const t of (s.tags || [])) set.add(t);
+  return [...set].sort();
+}
+function renderTagOptions(){
+  const sel = $("svcTag");
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">全部分类</option><option value="__none__">未分类</option>` +
+    allTags().map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
+  if([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+function renderList(){
+  const kw = $("svcFilter").value.trim().toLowerCase();
+  const tag = $("svcTag").value;
+  const visible = DATA.services.filter(s => {
+    if(tag && (s.tags || [])[0] !== tag && !(tag === "__none__" && !(s.tags || []).length)) return false;
+    if(kw){
+      const text = (s.code + " " + s.name + " " + (s.tags || []).join(" ")).toLowerCase();
+      if(!text.includes(kw)) return false;
+    }
+    return true;
+  });
+  $("svcCount").textContent = `共 ${visible.length} / ${DATA.services.length}`;
+  const groups = new Map();
+  for(const svc of visible){
+    const group = (svc.tags || [])[0] || "未分类";
+    if(!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(svc);
+  }
+  const groupNames = [...groups.keys()].sort((a, b) =>
+    a === "未分类" ? 1 : b === "未分类" ? -1 : a.localeCompare(b));
+  $("svclist").innerHTML = groupNames.map(g => {
+    const items = groups.get(g);
+    return `
+        <div class="group" data-group="${escapeHtml(g)}">
+          <span>${escapeHtml(g)} <span class="ct">${items.length}</span></span>
+          <span class="caret">▾</span>
+        </div>
+        <div class="items" data-items="${escapeHtml(g)}">
+          ${items.map(s => `
+            <div class="item ${s.code === CURRENT_CODE ? "on" : ""}" data-code="${escapeHtml(s.code)}">
+              <div class="code">${escapeHtml(s.code)}</div>
+              <div class="nm">${escapeHtml(s.name || "（未命名）")}${s.enabled === false ? " · 已停用" : ""}</div>
+              ${(s.tags || []).length ? `<div class="tagline">${(s.tags || []).map(escapeHtml).join(" · ")}</div>` : ""}
+            </div>`).join("")}
+        </div>`;
+  }).join("") || `<div class="empty">${kw || tag ? "没有匹配的调用项" : "还没有调用项，点「+ 新建」"}</div>`;
+  $("svclist").querySelectorAll(".item").forEach(el => {
+    el.onclick = () => {
+      const svc = DATA.services.find(s => s.code === el.dataset.code);
+      if(svc) loadService(svc);
+    };
+  });
+  $("svclist").querySelectorAll(".group").forEach(g => {
+    g.onclick = () => {
+      const items = $("svclist").querySelector(`.items[data-items="${g.dataset.group}"]`);
+      const collapsed = g.classList.toggle("collapsed");
+      items.classList.toggle("collapsed", collapsed);
+    };
+  });
+}
+
+/* ----------------------------------------------- 标签编辑（chip） */
+function renderTagChips(){
+  const ed = $("tagEditor");
+  const existingInput = $("tagInput");
+  ed.querySelectorAll(".chip").forEach(n => n.remove());
+  for(const t of CURRENT_TAGS){
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.background = "#e8f0fe";
+    chip.style.color = "#1a5fd0";
+    chip.style.borderColor = "#c2d6f6";
+    chip.style.fontWeight = "500";
+    chip.innerHTML = `${escapeHtml(t)} <span style="margin-left:4px;opacity:.7;cursor:pointer" data-rm="${escapeHtml(t)}">×</span>`;
+    ed.insertBefore(chip, existingInput);
+  }
+  ed.querySelectorAll("[data-rm]").forEach(el => {
+    el.onclick = e => { e.stopPropagation(); removeTag(el.dataset.rm); };
+  });
+  $("tags").value = CURRENT_TAGS.join(",");
+}
+function addTag(t){
+  const v = (t || "").trim();
+  if(!v) return;
+  if(CURRENT_TAGS.includes(v)) return;
+  CURRENT_TAGS.push(v);
+  renderTagChips();
+}
+function removeTag(t){
+  CURRENT_TAGS = CURRENT_TAGS.filter(x => x !== t);
+  renderTagChips();
+}
+
+/* ----------------------------------------------- 请求体字段编辑器（字段名 + 默认值） */
+function renderFields(){
+  $("fieldRows").innerHTML = CURRENT_FIELDS.map((f, i) => {
+    return `<tr data-i="${i}">
+      <td><input class="fName" value="${escapeHtml(f.name || "")}" placeholder="fieldName" /></td>
+      <td><input class="fDefault" value="${escapeHtml(fieldToStr(f.default))}" placeholder="默认值" /></td>
+      <td><button class="btn danger" data-del="${i}">删除</button></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="3" class="empty">还没有请求体字段，点上方按钮添加</td></tr>`;
+  $("fieldRows").querySelectorAll("tr[data-i]").forEach(tr => {
+    const i = +tr.dataset.i;
+    tr.querySelector(".fName").oninput = e => { CURRENT_FIELDS[i].name = e.target.value; };
+    tr.querySelector(".fDefault").oninput = e => { CURRENT_FIELDS[i].default = parseFieldValue(e.target.value); };
+    tr.querySelector("[data-del]").onclick = () => { CURRENT_FIELDS.splice(i, 1); renderFields(); };
+  });
+}
+function fieldToStr(v){
+  if(v === null || v === undefined) return "";
+  if(typeof v === "string") return v;
+  return JSON.stringify(v);
+}
+function parseFieldValue(text){
+  const trimmed = (text || "").trim();
+  if(trimmed === "") return "";
+  if(trimmed === "true") return true;
+  if(trimmed === "false") return false;
+  if(trimmed === "null") return null;
+  if(/^-?\d+$/.test(trimmed)) return Number(trimmed);
+  if(/^-?\d*\.\d+$/.test(trimmed)) return Number(trimmed);
+  return text;
+}
+
+/* ----------------------------------------------- 自定义请求头编辑器（表格 / JSON） */
+function renderHeaders(){
+  $("hdrFieldRows").innerHTML = CURRENT_HEADERS.map((h, i) => {
+    return `<tr data-hi="${i}">
+      <td><input class="hName" value="${escapeHtml(h.name || "")}" placeholder="X-Trace-Id" /></td>
+      <td><input class="hValue" value="${escapeHtml(fieldToStr(h.value))}" placeholder="值" /></td>
+      <td><button class="btn danger" data-hdel="${i}">删除</button></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="3" class="empty">还没有自定义请求头</td></tr>`;
+  $("hdrFieldRows").querySelectorAll("tr[data-hi]").forEach(tr => {
+    const i = +tr.dataset.hi;
+    tr.querySelector(".hName").oninput = e => { CURRENT_HEADERS[i].name = e.target.value; };
+    tr.querySelector(".hValue").oninput = e => { CURRENT_HEADERS[i].value = parseFieldValue(e.target.value); };
+    tr.querySelector("[data-hdel]").onclick = () => { CURRENT_HEADERS.splice(i, 1); renderHeaders(); };
+  });
+}
+function headersToJsonText(){
+  const obj = {};
+  for(const h of CURRENT_HEADERS){
+    const name = (h.name || "").trim();
+    if(!name) continue;
+    obj[name] = h.value;
+  }
+  return JSON.stringify(obj, null, 2);
+}
+function isScalarDict(v){
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+function syncHeadersFromJson(){
+  const text = $("headers").value.trim();
+  if(!text){
+    CURRENT_HEADERS = [];
+    CURRENT_RAW_HEADERS = null;
+    renderHeaders();
+    return;
+  }
+  let parsed;
+  try{ parsed = JSON.parse(text); }
+  catch(err){
+    CURRENT_HEADERS = [];
+    CURRENT_RAW_HEADERS = text;
+    renderHeaders();
+    return;
+  }
+  if(isScalarDict(parsed)){
+    CURRENT_HEADERS = Object.entries(parsed).map(([k, v]) => ({name: k, value: v}));
+    CURRENT_RAW_HEADERS = null;
+  }else{
+    CURRENT_HEADERS = [];
+    CURRENT_RAW_HEADERS = parsed;
+  }
+  renderHeaders();
+}
+function setHdrMode(mode){
+  if(mode === "json" && HDR_MODE !== "json"){
+    if(CURRENT_RAW_HEADERS !== null && CURRENT_RAW_HEADERS !== undefined){
+      $("headers").value = typeof CURRENT_RAW_HEADERS === "string"
+        ? CURRENT_RAW_HEADERS : JSON.stringify(CURRENT_RAW_HEADERS, null, 2);
+    }else{
+      $("headers").value = headersToJsonText();
+    }
+  }else if(HDR_MODE === "json" && mode !== "json"){
+    syncHeadersFromJson();
+  }
+  HDR_MODE = mode;
+  [...$("hdrModeSeg").children].forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("hdrFieldBox").hidden = mode !== "form";
+  $("hdrJsonBox").hidden = mode !== "json";
+  $("addHeader").style.display = mode === "form" ? "" : "none";
+}
+
+
+
+
+
+
+
+/* ----------------------------------------------- 表单读写 */
+function isScalarBody(body){
+  return !!body && typeof body === "object" && !Array.isArray(body)
+    && Object.keys(body).length > 0
+    && Object.values(body).every(v => v === null || ["string","number","boolean"].includes(typeof v));
+}
+
+function loadService(service){
+  CURRENT_CODE = service.code;
+  $("code").value = service.code || "";
+  $("name").value = service.name || "";
+  $("method").value = (service.method || "POST").toUpperCase();
+  CURRENT_TAGS = [...(service.tags || [])];
+  CURRENT_RESPONSES = buildRespTree(service.responseFields || []);
+  $("enabled").checked = service.enabled !== false;
+  $("defaultModule").value = service.defaultModule || "";
+  $("bodyFormat").value = (service.bodyFormat || "").toLowerCase() || "";
+  const headers = service.headers || {};
+  CURRENT_HEADERS = Object.entries(headers).map(([k, v]) => ({name: k, value: v}));
+  CURRENT_RAW_HEADERS = null;
+  // 请求体取值来源：bodyFields 优先；否则 body 是纯标量对象时派生为字段
+  // （让调用页能看到的值在请求体字段表格里同样可见）；否则保留原始 body 走 JSON 视图
+  const bf = service.bodyFields || [];
+  const body = service.body;
+  if(bf.length){
+    CURRENT_FIELDS = bf.map(f => ({
+      name: f.name || "",
+      default: f.default !== undefined ? f.default : ""
+    }));
+    CURRENT_RAW_BODY = null;
+  }else if(isScalarBody(body) && !Object.keys(service.bodyByPlatform || {}).length){
+    CURRENT_FIELDS = Object.entries(body).map(([k, v]) => ({name: k, default: v}));
+    CURRENT_RAW_BODY = null;
+  }else{
+    CURRENT_FIELDS = [];
+    CURRENT_RAW_BODY = body ?? null;
+  }
+  // 原始 raw body / bodyByPlatform：fields 表单不覆盖时随 save 原样回传，避免丢失
+  CURRENT_RAW_BODY_BY_PLATFORM = (bf.length || CURRENT_FIELDS.length) ? {} : ({...(service.bodyByPlatform || {})});
+  CURRENT_RESP_JSON_EXAMPLE = "";
+  $("respJson").value = "";
+  setBodyMode("form");
+  setRespMode("table");
+  setHdrMode("form");
+  renderTagChips();
+  renderFields();
+  renderRespFields();
+  renderHeaders();
+  $("formTitle").textContent = `调用项定义：${service.code}`;
+  $("delete").disabled = false;
+  hideNote($("banner"));
+  renderList();
+}
+
+function newService(){
+  CURRENT_CODE = null;
+  $("formTitle").textContent = "调用项定义：新建";
+  ["code","name","defaultModule"].forEach(id => { $(id).value = ""; });
+  $("headers").value = "";
+  $("method").value = "";
+  $("bodyFormat").value = "";
+  $("enabled").checked = true;
+  CURRENT_FIELDS = [];
+  CURRENT_TAGS = [];
+  CURRENT_RESPONSES = [];
+  CURRENT_RESP_JSON_EXAMPLE = "";
+  $("respJson").value = "";
+  CURRENT_HEADERS = [];
+  CURRENT_RAW_HEADERS = null;
+  CURRENT_RAW_BODY = null;
+  CURRENT_RAW_BODY_BY_PLATFORM = {};
+  setBodyMode("form");
+  setRespMode("table");
+  setHdrMode("form");
+  renderTagChips();
+  renderFields();
+  renderRespFields();
+  renderHeaders();
+  $("delete").disabled = true;
+  renderList();
+  $("code").focus();
+}
+
+/* 请求体编辑器：表格 ⇄ JSON 模式 */
+function fieldsToBodyJSON(){
+  const obj = {};
+  for(const f of CURRENT_FIELDS){
+    const name = (f.name || "").trim();
+    if(!name) continue;
+    obj[name] = f.default;
+  }
+  return obj;
+}
+
+function setBodyMode(mode){
+  if(mode === "json"){
+    if(BODY_MODE !== "json"){
+      if(CURRENT_RAW_BODY !== null && CURRENT_RAW_BODY !== undefined){
+        $("body").value = typeof CURRENT_RAW_BODY === "string"
+          ? CURRENT_RAW_BODY : JSON.stringify(CURRENT_RAW_BODY, null, 2);
+      }else{
+        $("body").value = JSON.stringify(fieldsToBodyJSON(), null, 2);
+      }
+    }
+  }else if(BODY_MODE === "json"){
+    syncFieldsFromBodyJson();
+  }
+  BODY_MODE = mode;
+  [...$("bodyModeSeg").children].forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("fieldBox").hidden = mode !== "form";
+  $("jsonBox").hidden = mode !== "json";
+  $("addField").style.display = mode === "form" ? "" : "none";
+}
+
+function syncFieldsFromBodyJson(){
+  const text = $("body").value.trim();
+  if(!text){
+    CURRENT_FIELDS = [];
+    CURRENT_RAW_BODY = null;
+    renderFields();
+    return;
+  }
+  let parsed;
+  try{ parsed = JSON.parse(text); }
+  catch(err){
+    // 不是合法 JSON：保留原文作为原始请求体
+    CURRENT_FIELDS = [];
+    CURRENT_RAW_BODY = text;
+    renderFields();
+    return;
+  }
+  if(isScalarBody(parsed)){
+    CURRENT_FIELDS = Object.entries(parsed).map(([k, v]) => ({name: k, default: v}));
+    CURRENT_RAW_BODY = null;
+  }else{
+    CURRENT_FIELDS = [];
+    CURRENT_RAW_BODY = parsed;
+  }
+  renderFields();
+}
+
+/* ----------------------------------------------- 回参编辑器（子级树模型）
+   每行只有一个「名称」= 该层在响应 JSON 里的键名；层级完全由「子级」关系表达，
+   不再需要 data.total 这种点号写法。完整取值路径在保存时由父链自动拼出来。 */
+let RESP_SEQ = 0;
+
+function newResp(parentId){
+  return {_id: ++RESP_SEQ, parentId: parentId ?? null, name: "", note: "", pick: true};
+}
+
+function respById(id){
+  return CURRENT_RESPONSES.find(r => r._id === id) || null;
+}
+
+/* 深度：沿父链往上数 */
+function respDepth(r){
+  let d = 0, cur = r, guard = 0;
+  while(cur && cur.parentId != null && guard++ < 64){
+    cur = respById(cur.parentId);
+    if(cur) d++;
+  }
+  return d;
+}
+
+/* 由父链拼出完整点号路径（保存 / 预览用） */
+function respFullPath(r){
+  const segs = [];
+  let guard = 0;
+  let cur = r;
+  while(cur && guard++ < 64){
+    const seg = (cur.name || "").trim().replace(/\s+/g, "_");
+    if(seg) segs.unshift(seg);
+    if(cur.parentId == null) break;
+    cur = respById(cur.parentId);
+  }
+  return segs.join(".");
+}
+
+/* 把存储的 {name, path, note, pick} 还原成子级树。
+   存储里只有叶子（如 __sys__.code / data.total），中间层（__sys__ / data）
+   按路径自动补出来，这样表格里就是一棵完整的子级树。 */
+function buildRespTree(stored){
+  const items = (stored || []).map(r => {
+    const path = (r.path || r.name || "").trim();
+    const segs = path ? path.split(".").filter(Boolean) : [];
+    let note = (r.note || "").trim();
+    const oldName = (r.name || "").trim();
+    if(oldName && oldName !== path && oldName !== segs.join(".") && !note) note = oldName;
+    return {path, segs, note, pick: r.pick !== false};
+  }).filter(it => it.segs.length)
+    .sort((a, b) => a.segs.length - b.segs.length || a.path.localeCompare(b.path));
+
+  const byPath = new Map(), out = [];
+  const ensure = path => {
+    if(!path) return null;
+    if(byPath.has(path)) return byPath.get(path);
+    const segs = path.split(".");
+    const parent = ensure(segs.slice(0, -1).join("."));
+    const row = {_id: ++RESP_SEQ, parentId: parent ? parent._id : null,
+                 name: segs[segs.length - 1], note: "", pick: false};
+    byPath.set(path, row);
+    out.push(row);
+    return row;
+  };
+  for(const it of items){
+    const parent = ensure(it.segs.slice(0, -1).join("."));
+    const existing = byPath.get(it.path);
+    if(existing){
+      // 这一层已经被当作中间层补出来了 → 补上说明与可取值
+      if(it.note) existing.note = it.note;
+      existing.pick = it.pick;
+    }else{
+      const row = {_id: ++RESP_SEQ, parentId: parent ? parent._id : null,
+                   name: it.segs[it.segs.length - 1], note: it.note, pick: it.pick};
+      byPath.set(it.path, row);
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+function renderRespFields(){
+  const rows = CURRENT_RESPONSES;
+  const parts = rows.map((r, i) => {
+    const depth = respDepth(r);
+    const indent = depth > 0 ? `padding-left:${Math.min(depth, 8) * 18}px` : "";
+    const connector = depth > 0
+      ? `<span class="resp-tree" style="margin-left:${(depth - 1) * 18}px">└─</span>` : "";
+    return `<tr data-ri="${i}">
+      <td style="${indent}">
+        <span style="display:inline-flex;align-items:center;gap:4px;width:100%">
+          ${connector}
+          <input class="rName mono" value="${escapeHtml(r.name || "")}" placeholder="" style="flex:1" />
+        </span>
+      </td>
+      <td><input class="rNote" value="${escapeHtml(r.note || "")}" placeholder="选填" /></td>
+      <td class="pickcell"><input type="checkbox" class="rPick" ${r.pick !== false ? "checked" : ""} /></td>
+      <td class="lvl">
+        <button class="btn mini" data-promote="${i}" title="升一层">◀</button>
+        <button class="btn mini" data-demote="${i}" title="降一层（挂到上一行下）">▶</button>
+        <button class="btn mini" data-child="${i}" title="在当前行下新增子级">+ 子级</button>
+        <button class="btn danger mini" data-rdel="${i}">删</button>
+      </td>
+    </tr>`;
+  });
+  $("respRows").innerHTML = parts.join("") ||
+    `<tr><td colspan="4" class="empty">还没有回参：可点「+ 添加回参」，或切到 JSON 粘贴示例响应自动生成</td></tr>`;
+
+  $("respRows").querySelectorAll("tr[data-ri]").forEach(tr => {
+    const i = +tr.dataset.ri;
+    tr.querySelector(".rName").oninput = e => {
+      CURRENT_RESPONSES[i].name = e.target.value;
+      updateRespPreviewHint();
+    };
+    tr.querySelector(".rNote").oninput = e => { CURRENT_RESPONSES[i].note = e.target.value; };
+    const cb = tr.querySelector(".rPick");
+    if(cb) cb.onchange = e => {
+      // 勾选/取消父项 = 同步所有子项的 pick（单向级联）；
+      // 子项手动切换不影响父项，避免抖动。
+      const checked = e.target.checked;
+      CURRENT_RESPONSES[i].pick = checked;
+      const myId = CURRENT_RESPONSES[i]._id;
+      const descendants = (rootId) => {
+        const out = [];
+        const stack = [rootId];
+        while(stack.length){
+          const pid = stack.pop();
+          for(const r of CURRENT_RESPONSES){
+            if(r.parentId === pid){ out.push(r); stack.push(r._id); }
+          }
+        }
+        return out;
+      };
+      for(const d of descendants(myId)) d.pick = checked;
+      renderRespFields();
+    };
+
+    // ◀ 升一层：挂到祖父下（已经是顶层则无动作）
+    tr.querySelector("[data-promote]").onclick = () => {
+      const me = CURRENT_RESPONSES[i];
+      if(me.parentId == null) return;
+      const parent = respById(me.parentId);
+      me.parentId = parent ? parent.parentId : null;
+      renderRespFields();
+    };
+    // ▶ 降一层：挂到上一行下（防止挂到自己的子孙上）
+    tr.querySelector("[data-demote]").onclick = () => {
+      const me = CURRENT_RESPONSES[i];
+      const prev = CURRENT_RESPONSES[i - 1];
+      if(!prev || prev._id === me._id) return;
+      // 不能挂到自己的子孙下
+      let cur = prev, guard = 0;
+      while(cur && guard++ < 64){
+        if(cur._id === me._id) return;
+        cur = cur.parentId != null ? respById(cur.parentId) : null;
+      }
+      me.parentId = prev._id;
+      renderRespFields();
+    };
+    // + 子级：插到当前行子树之后，parentId = 当前行
+    tr.querySelector("[data-child]").onclick = () => {
+      const me = CURRENT_RESPONSES[i];
+      const row = newResp(me._id);
+      // 找到 me 的子树末尾
+      let last = i;
+      for(let k = i + 1; k < CURRENT_RESPONSES.length; k++){
+        let cur = CURRENT_RESPONSES[k], isDesc = false, guard = 0;
+        while(cur && cur.parentId != null && guard++ < 64){
+          if(cur.parentId === me._id){ isDesc = true; break; }
+          cur = respById(cur.parentId);
+        }
+        if(isDesc) last = k; else break;
+      }
+      CURRENT_RESPONSES.splice(last + 1, 0, row);
+      renderRespFields();
+      const trs = $("respRows").querySelectorAll("tr[data-ri]");
+      trs[last + 1]?.querySelector(".rName")?.focus();
+    };
+    tr.querySelector("[data-rdel]").onclick = () => {
+      const me = CURRENT_RESPONSES[i];
+      // 删自己时，子孙一并删掉（避免留下悬空父引用）
+      const doomed = new Set([me._id]);
+      let changed = true;
+      while(changed){
+        changed = false;
+        for(const r of CURRENT_RESPONSES){
+          if(!doomed.has(r._id) && r.parentId != null && doomed.has(r.parentId)){
+            doomed.add(r._id); changed = true;
+          }
+        }
+      }
+      CURRENT_RESPONSES = CURRENT_RESPONSES.filter(r => !doomed.has(r._id));
+      renderRespFields();
+    };
+  });
+  updateRespPreviewHint();
+}
+
+/* 把当前回参树反推成「示例响应」形态，给 JSON 视图做兜底显示 */
+function currentResponsesToExample(){
+  const obj = {};
+  for(const r of CURRENT_RESPONSES){
+    const path = respFullPath(r);
+    if(!path) continue;
+    const segs = path.split(".");
+    let cur = obj;
+    for(let i = 0; i < segs.length - 1; i++){
+      const k = segs[i];
+      if(!cur[k] || typeof cur[k] !== "object" || Array.isArray(cur[k])) cur[k] = {};
+      cur = cur[k];
+    }
+    cur[segs[segs.length - 1]] = "";
+  }
+  return JSON.stringify(obj, null, 2);
+}
+
+function updateRespPreviewHint(){ /* 预留：表格模式下无需额外提示 */ }
+
+/* 从粘贴的示例响应生成回参树 */
+function walkRespTree(v, parentId, out){
+  if(v && typeof v === "object" && !Array.isArray(v)){
+    for(const [k, val] of Object.entries(v)){
+      const isObj = val !== null && typeof val === "object" && !Array.isArray(val);
+      const row = {_id: ++RESP_SEQ, parentId, name: k,
+                   note: Array.isArray(val) ? "数组（整体取值）" : "", pick: true};
+      out.push(row);
+      if(isObj) walkRespTree(val, row._id, out);
+    }
+    return;
+  }
+  if(Array.isArray(v) && parentId == null){
+    // 顶层数组：整体作为一条
+    out.push({_id: ++RESP_SEQ, parentId: null, name: "[]", note: "数组（整体取值）", pick: true});
+  }
+}
+
+function genRespFromJson(){
+  const text = $("respJson").value.trim();
+  if(!text){ note("<b>请先粘贴示例响应 JSON。</b>", "err"); return; }
+  let parsed;
+  try{ parsed = JSON.parse(text); }
+  catch(err){ note("<b>示例响应不是合法 JSON：</b>" + escapeHtml(err.message), "err"); return; }
+  const rows = [];
+  walkRespTree(parsed, null, rows);
+  if(!rows.length){ note("<b>示例响应里没有可提取的字段。</b>", "err"); return; }
+  if(CURRENT_RESPONSES.length &&
+     !confirm(`将用示例响应生成 ${rows.length} 条回参，替换当前的 ${CURRENT_RESPONSES.length} 条，继续吗？`)) return;
+  CURRENT_RESPONSES = rows;
+  CURRENT_RESP_JSON_EXAMPLE = text;
+  setRespMode("table");
+  renderRespFields();
+  note(`已从示例响应生成 <b>${rows.length}</b> 条回参（已按层级展开为子级树）。`, "ok");
+}
+
+function setRespMode(mode){
+  if(mode === "json" && RESP_MODE !== "json"){
+    // 进入 JSON 视图：把当前回参反推成示例响应，方便用户改完再生成
+    const sample = currentResponsesToExample();
+    $("respJson").value = CURRENT_RESP_JSON_EXAMPLE || sample;
+  }
+  RESP_MODE = mode;
+  [...$("respModeSeg").children].forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("respTableBox").hidden = mode !== "table";
+  $("respJsonBox").hidden = mode !== "json";
+  $("addResp").style.display = mode === "table" ? "" : "none";
+}
+
+
+function readForm(){
+  // 请求头：JSON 模式下若原文是合法 dict 就用原文，否则回退到表格反推；
+  // 表格模式下把所有 {name, value} 合成 dict；值为空字符串视为没设。
+  let headers = {};
+  if(HDR_MODE === "json"){
+    const headerText = $("headers").value.trim();
+    if(headerText){
+      try{ headers = JSON.parse(headerText); }
+      catch(err){ throw new Error("请求头不是合法 JSON：" + err.message); }
+    }
+  }else{
+    for(const h of CURRENT_HEADERS){
+      const name = (h.name || "").trim();
+      if(!name) continue;
+      if(h.value === "" || h.value === undefined) continue;
+      headers[name] = h.value;
+    }
+    // 表格为空但有 raw 原文时兜底保留（与请求体行为一致）
+    if(!Object.keys(headers).length && CURRENT_RAW_HEADERS !== null && CURRENT_RAW_HEADERS !== undefined){
+      headers = CURRENT_RAW_HEADERS;
+    }
+  }
+  // 名称 = 本层键名；完整 path 由父链自动拼出。
+  // 纯结构层（有子级且没勾「可取值」）不落盘，重载时会按路径自动补回来，
+  // 这样配置文件里只保留真正要用的回参。
+  const hasChild = new Set(CURRENT_RESPONSES.map(r => r.parentId).filter(v => v != null));
+  const responseFields = CURRENT_RESPONSES.map(r => {
+    const name = (r.name || "").trim().replace(/\s+/g, "_");
+    if(!name) return null;
+    if(r.pick === false && hasChild.has(r._id)) return null;
+    const path = respFullPath(r);
+    if(!path) return null;
+    const out = {name, path};
+    if((r.note || "").trim()) out.note = r.note.trim();
+    out.pick = r.pick !== false;
+    return out;
+  }).filter(Boolean);
+  const form = {
+    code: $("code").value.trim(),
+    name: $("name").value.trim(),
+    method: $("method").value,
+    tags: [...CURRENT_TAGS],
+    headers,
+    defaultModule: $("defaultModule").value.trim(),
+    responseFields,
+    bodyFormat: $("bodyFormat").value || "",
+    enabled: $("enabled").checked
+  };
+  if(BODY_MODE === "json"){
+    // JSON 视图作为请求体原文保存（bodyFields 清空，避免双重来源）
+    const text = $("body").value.trim();
+    if(text){
+      try{ form.body = JSON.parse(text); }
+      catch(err){ form.body = text; }
+    }else{
+      form.body = CURRENT_RAW_BODY ?? null;
+    }
+    form.bodyFields = [];
+    form.bodyByPlatform = {...CURRENT_RAW_BODY_BY_PLATFORM};
+  }else{
+    // 表格视图：按字段保存（只有 name + default，运行期值由调用页临时填，不入配置）
+    const bodyFields = CURRENT_FIELDS.map(f => {
+      const out = {name: (f.name || "").trim()};
+      if(f.default !== "" && f.default !== undefined) out.default = f.default;
+      return out;
+    }).filter(f => f.name);
+    form.bodyFields = bodyFields;
+    if(bodyFields.length === 0){
+      if(CURRENT_RAW_BODY !== null && CURRENT_RAW_BODY !== undefined){
+        form.body = CURRENT_RAW_BODY;
+      }
+      form.bodyByPlatform = CURRENT_RAW_BODY_BY_PLATFORM;
+    }
+  }
+  return form;
+}
+
+async function save(){
+  let service;
+  try{ service = readForm(); }
+  catch(err){ note("<b>表单有问题：</b>" + escapeHtml(err.message), "err"); return; }
+  if(!service.code){ note("<b>表单有问题：</b>服务编码不能为空", "err"); return; }
+  try{
+    const data = await postJSON("/api/services/save", {service, originalCode: CURRENT_CODE});
+    DATA.services = data.services;
+    CURRENT_CODE = service.code;
+    renderTagOptions();
+    renderList();
+    // 保存成功 → 顶部居中提示；用户语言，不暴露配置路径 / 备份文件名（见 R050）
+    const actionLabel = data.action === "created" ? "新建"
+                      : data.action === "updated" ? "保存"
+                      : data.action === "imported" ? "导入" : "更新";
+    const warns = data.warnings || [];
+    const toastText = `已${actionLabel}调用项：${service.code}` +
+      (warns.length ? `\n提示：${warns.join("；")}` : "");
+    showToast({text: toastText, kind: warns.length ? "warn" : "ok"});
+    $("formTitle").textContent = `调用项定义：${service.code}`;
+    $("delete").disabled = false;
+  }catch(err){
+    // 保存失败仍走顶部 banner（不挡 toast）
+    note("<b>保存失败：</b>" + escapeHtml(err.message || String(err)), "err");
+  }
+}
+
+async function remove(){
+  if(!CURRENT_CODE) return;
+  const removedCode = CURRENT_CODE;   // 下面 loadService/newService 会改写 CURRENT_CODE，先留一份
+  if(!confirm(`确定删除调用项 ${removedCode} 吗？`)) return;
+  try{
+    const data = await postJSON("/api/services/delete", {code: removedCode});
+    DATA.services = data.services;
+    renderTagOptions();
+    if(DATA.services.length) loadService(DATA.services[0]); else newService();
+    // 与保存同一套反馈，不暴露备份文件名（见 R050）
+    showToast({text: `已删除调用项：${removedCode}`});
+  }catch(err){
+    note("<b>删除失败：</b>" + escapeHtml(err.message || String(err)), "err");
+  }
+}
+
+
+/* ----------------------------------------------- 导入 / 导出 */
+function download(url, filename){
+  const a = document.createElement("a");
+  a.href = apiUrl(url);
+  a.download = filename || "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function stamp(){
+  return new Date().toISOString().slice(0,19).replace(/[:T]/g, "");
+}
+
+function pickFile(input, onText){
+  input.value = "";
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => onText(String(reader.result || ""));
+    reader.onerror = () => note("<b>读取文件失败：</b>" + escapeHtml(file.name), "err");
+    reader.readAsText(file, "utf-8");
+  };
+  input.click();
+}
+
+async function importServices(payload, filename){
+  const mode = confirm(
+    "导入方式：\n\n【确定】合并 —— 同编码覆盖，其它服务保留\n【取消】替换 —— 先清空再导入\n\n文件：" + filename);
+  payload.mode = mode ? "merge" : "replace";
+  try{
+    const data = await postJSON("/api/services/import", payload);
+    DATA.services = data.services;
+    renderTagOptions();
+    renderList();
+    if(DATA.services.length) loadService(DATA.services.find(s => s.code === CURRENT_CODE) || DATA.services[0]);
+    const warns = data.warnings || [];
+    // 与保存同一套反馈：toast 用纯文本，不暴露备份文件名（见 R050 / R064）
+    showToast({
+      text: `导入完成：新增 ${data.added} 个，覆盖 ${data.updated} 个` +
+            (warns.length ? `\n提示 ${warns.length} 条：${warns.slice(0, 8).join("；")}` : ""),
+      kind: warns.length ? "warn" : "ok",
+    });
+  }catch(err){
+    note("<b>导入失败：</b>" + escapeHtml(err.message || String(err)), "err");
+  }
+}
+
+function importCsvText(text, filename){
+  return importServices({csv: text}, filename);
+}
+
+function importJsonText(text, filename){
+  let doc;
+  try{ doc = JSON.parse(text); }
+  catch(err){ note("<b>导入失败：</b>JSON 格式有误：" + escapeHtml(err.message), "err"); return; }
+  const services = Array.isArray(doc) ? doc : (doc.services || []);
+  if(!Array.isArray(services) || !services.length){
+    note("<b>导入失败：</b>文件里没有 services 数组", "err"); return;
+  }
+  return importServices({services}, filename);
+}
+
+/* ----------------------------------------------- 绑定 */
+function bind(){
+  $("svcFilter").oninput = renderList;
+  $("svcTag").onchange = renderList;
+  $("newService").onclick = newService;
+  $("save").onclick = save;
+  $("delete").onclick = remove;
+  $("exportCsv").onclick = () => download("/api/services/export.csv", `services-${stamp()}.csv`);
+  $("exportJson").onclick = () => download("/api/services/export.json", `services-${stamp()}.json`);
+  $("tplCsv").onclick = () => download("/api/services/template.csv", "services-template.csv");
+  $("importCsv").onclick = () => pickFile($("fileCsv"), importCsvText);
+  $("importJson").onclick = () => pickFile($("fileJson"), importJsonText);
+  $("addResp").onclick = () => {
+    CURRENT_RESPONSES.push(newResp(null));
+    renderRespFields();
+    const rows = $("respRows").querySelectorAll("tr[data-ri]");
+    rows[rows.length - 1]?.querySelector(".rName")?.focus();
+  };
+  // 把 JSON 视图里的实时输入也缓存进 CURRENT_RESP_JSON_EXAMPLE（避免切走后再回来丢失）
+  $("respJson").oninput = e => { CURRENT_RESP_JSON_EXAMPLE = e.target.value; };
+  $("bodyModeSeg").onclick = e => {
+    const btn = e.target.closest("button"); if(!btn) return;
+    setBodyMode(btn.dataset.mode);
+  };
+  $("hdrModeSeg").onclick = e => {
+    const btn = e.target.closest("button"); if(!btn) return;
+    setHdrMode(btn.dataset.mode);
+  };
+  $("respModeSeg").onclick = e => {
+    const btn = e.target.closest("button"); if(!btn) return;
+    setRespMode(btn.dataset.mode);
+  };
+  $("genResp").onclick = genRespFromJson;
+  $("revert").onclick = () => {
+    if(CURRENT_CODE){
+      const svc = DATA.services.find(s => s.code === CURRENT_CODE);
+      if(svc) loadService(svc);
+    }else newService();
+    note("已放弃未保存的修改。", "ok");
+  };
+  $("addField").onclick = () => {
+    let idx = 1;
+    let name = "field" + idx;
+    while(CURRENT_FIELDS.some(f => f.name === name)){ idx++; name = "field" + idx; }
+    CURRENT_FIELDS.push({name, default: "", value: ""});
+    renderFields();
+  };
+  $("addHeader").onclick = () => {
+    let idx = 1;
+    let name = "X-Header-" + idx;
+    while(CURRENT_HEADERS.some(h => h.name === name)){ idx++; name = "X-Header-" + idx; }
+    CURRENT_HEADERS.push({name, value: ""});
+    renderHeaders();
+  };
+  $("addTag").onclick = () => {
+    $("tagInput").style.display = "inline-block";
+    $("tagInput").value = "";
+    $("tagInput").focus();
+  };
+  $("tagInput").onkeydown = e => {
+    if(e.key === "Enter"){
+      e.preventDefault();
+      const v = $("tagInput").value;
+      addTag(v);
+      $("tagInput").value = "";
+      $("tagInput").style.display = "none";
+    }else if(e.key === "Escape"){
+      $("tagInput").value = "";
+      $("tagInput").style.display = "none";
+    }
+  };
+}
+
+boot().catch(err => note("<b>加载失败：</b>" + escapeHtml(err.message || String(err)) +
+  "<br>请确认 <code>python3 query.py serve</code> 正在运行，并通过 <code>http://127.0.0.1:8765/services</code> 访问本页。", "err"));
+</script>
+</body>
+</html>

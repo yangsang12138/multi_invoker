@@ -1,0 +1,25 @@
+{
+  "services": [
+    {
+      "code": "S_DEMO_ECHO",
+      "name": "示例：回显接口",
+      "method": "POST",
+      "defaultModule": "/demo",
+      "bodyFormat": "json",
+      "enabled": true,
+      "pick": "data.total",
+      "tags": ["示例"],
+      "headers": {},
+      "moduleByPlatform": {},
+      "bodyByPlatform": {},
+      "bodyFields": [
+        { "name": "pageNo", "default": "1" },
+        { "name": "pageSize", "default": "20" }
+      ],
+      "responseFields": [
+        { "name": "状态", "path": "__sys__.code", "pick": false },
+        { "name": "总数", "path": "data.total", "pick": true }
+      ]
+    }
+  ]
+}

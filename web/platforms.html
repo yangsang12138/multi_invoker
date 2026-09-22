@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>节点列表 — Multi-Service Invoker</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/style.css" />
+<script>/* 被 / 页用 iframe 嵌入时隐藏自带导航，避免重复 */
+if(window.self !== window.top) document.documentElement.classList.add("embed");</script>
+</head>
+<body>
+<header>
+  <h1>Multi-Service Invoker</h1>
+  <nav>
+    <a href="/">调用</a>
+    <a href="/services">调用项定义</a>
+    <a href="/platforms" class="on">节点列表</a>
+  </nav>
+</header>
+
+<main>
+  <div class="banner err" id="banner" hidden></div>
+
+  <section class="card plat-editor">
+    <h2>节点列表
+      <span class="hint">保存时整体写回</span>
+    </h2>
+
+    <div class="toolbar">
+      <input type="text" id="filter" class="filter" placeholder="搜索编码 / 名称 / 简称" />
+      <span class="spacer"></span>
+      <button class="btn ghost" id="addPlat">＋ 新增节点</button>
+      <button class="btn primary" id="save">保存</button>
+    </div>
+
+    <table id="platTable">
+      <colgroup>
+        <col style="width:96px">
+        <col style="width:82px">
+        <col style="width:250px">
+        <col style="width:176px">
+        <col style="width:100px">
+        <col style="width:250px">
+        <col style="width:118px">
+        <col style="width:200px">
+        <col style="width:58px">
+      </colgroup>
+      <thead><tr>
+        <th>编码</th><th>简称</th><th>完整名称</th>
+        <th>标签</th><th>环境</th><th>baseUrl</th><th>选项</th><th>备注</th><th></th>
+      </tr></thead>
+      <tbody id="platRows"></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="/common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let PLATFORMS = [];
+let DRAFT = {};
+const FILTER = { kw: "" };
+
+function note(html, kind){ showNote($("banner"), html, kind || "ok"); }
+/* 地址条目：{tags: ["测试"], baseUrl: "http://..."}。没有「环境」这个概念，
+   标签是任意词，环境只是标签的一种用法。 */
+function emptyEp(){ return {tags: [], baseUrl: ""}; }
+function cloneEp(ep){ return {tags: [...(ep.tags || [])], baseUrl: ep.baseUrl || ""}; }
+
+function snapshotToDraft(list){
+  const d = {};
+  for(const p of list){
+    d[p.code] = {
+      code: p.code,
+      name: p.name || "",
+      shortName: p.shortName || "",
+      deployment: p.deployment || "merged",
+      insecure: !!p.insecure,
+      follow: !!p.follow,
+      anyScheme: !!p.anyScheme,
+      note: p.note || "",
+      tags: [...(p.tags || [])],
+      // 每个地址条目自带标签；一条 = 界面上一行
+      endpoints: (p.endpoints || []).map(cloneEp),
+      _new: false,
+      _deleted: false,
+    };
+  }
+  return d;
+}
+
+function applyFilter(){
+  const kw = FILTER.kw.trim().toLowerCase();
+  // 同一平台的多个行必须一起显隐，否则 rowspan 会错位
+  const hideCodes = new Set();
+  const rows = $("platRows").querySelectorAll("tr[data-code]");
+  rows.forEach(tr => {
+    if(kw && !(tr.dataset.search || "").includes(kw)) hideCodes.add(tr.dataset.code);
+  });
+  rows.forEach(tr => { tr.hidden = hideCodes.has(tr.dataset.code); });
+}
+
+function optionChip(d, key, label){
+  return `<span class="chip ${key} ${d[key] ? "on" : ""}" data-act="${key}">${
+    d[key] ? "✓ " : ""}${label}</span>`;
+}
+
+function urlCell(ep, role){
+  const base = ep.baseUrl || "";
+  return `<input type="text" class="fUrlBase" data-ep="${role}" value="${escapeHtml(base)}" placeholder="http://host[:port]" />`;
+}
+
+function tagChips(tags){
+  return tags.map(t => `<span class="chip" style="background:#f0f4fb;color:#566682;border:1px solid var(--line);font-weight:400" data-rm="${escapeHtml(t)}">${escapeHtml(t)} <span style="opacity:.6;margin-left:2px">×</span></span>`).join("");
+}
+/* 通用标签编辑器：wrapClass 用来区分「平台标签」与「地址条目标签」 */
+function tagsCell(tags, wrapClass){
+  return `<div class="tags-cell ${wrapClass || "plat-tags-cell"}">${tagChips(tags)}` +
+    `<span class="add-tag" data-act="add-tag">+ 标签</span>` +
+    `<input type="text" class="f-tag-input" placeholder="回车提交" style="display:none;width:100px;font-size:12px;padding:3px 6px" /></div>`;
+}
+
+function renderRows(){
+  const codes = Object.keys(DRAFT);
+  codes.sort((a, b) => {
+    const A = DRAFT[a], B = DRAFT[b];
+    if(!!A._new !== !!B._new) return A._new ? 1 : -1;
+    if(!!A._deleted !== !!B._deleted) return A._deleted ? 1 : -1;
+    return a.localeCompare(b);
+  });
+  const out = [];
+  for(const code of codes){
+    const d = DRAFT[code];
+    if(!d.endpoints.length) d.endpoints.push(emptyEp());   // 始终给一行可编辑
+    const span = d.endpoints.length;
+    const search = [d.code, d.name, d.shortName].join(" ").toLowerCase();
+    const cls = (d._new ? "new-row " : "") + (d._deleted ? "deleted " : "");
+    const delTitle = d._new ? "取消新增" : d._deleted ? "撤销删除" : "删除";
+    d.endpoints.forEach((ep, idx) => {
+      const first = idx === 0;
+      const tds = [];
+      if(first){
+        tds.push(`<td rowspan="${span}"><input type="text" class="fCode" value="${escapeHtml(d.code)}" placeholder="code" ${d._new ? "" : 'readonly title="编码不可修改（删除并新增）"'}/></td>`);
+        tds.push(`<td rowspan="${span}"><input type="text" class="fShort" value="${escapeHtml(d.shortName)}" placeholder="选填" /></td>`);
+        tds.push(`<td rowspan="${span}"><input type="text" class="fName" value="${escapeHtml(d.name)}" placeholder="完整名称" /></td>`);
+        tds.push(`<td rowspan="${span}">${tagsCell(d.tags || [], "plat-tags-cell")}</td>`);
+      }
+      tds.push(`<td class="envcell"><input type="text" class="fEnv" data-ep="${idx}" value="${escapeHtml((ep.tags || [])[0] || "")}" placeholder="如 测试 / 正式" /></td>`);
+      tds.push(`<td>${urlCell(ep, idx)}</td>`);
+      if(first){
+        tds.push(`<td rowspan="${span}">${optionChip(d, "insecure", "忽略证书")}${optionChip(d, "follow", "跟随跳转")}${optionChip(d, "anyScheme", "忽略协议")}</td>`);
+        tds.push(`<td rowspan="${span}"><input type="text" class="fNote" value="${escapeHtml(d.note)}" placeholder="选填" /></td>`);
+        tds.push(`<td rowspan="${span}"><div class="row-actions">
+          <button class="icon-btn f-add-ep" title="加一个地址条目">＋</button>
+          <button class="icon-btn f-del" title="${delTitle}">${d._deleted ? "↶" : "✕"}</button>
+        </div></td>`);
+      }
+      out.push(`<tr data-code="${escapeHtml(d.code)}" data-ep="${idx}" data-search="${escapeHtml(search)}" class="${cls}">${tds.join("")}</tr>`);
+    });
+  }
+  $("platRows").innerHTML = out.join("") ||
+    `<tr><td colspan="10" class="empty">还没有节点，点「＋ 新增节点」</td></tr>`;
+  bindRows();
+  applyFilter();
+}
+
+/* 绑定一个「标签编辑器」（平台级 / 地址条目级共用） */
+function bindTagsEditor(wrap, getList, onChange){
+  if(!wrap) return;
+  wrap.querySelectorAll("[data-rm]").forEach(el => {
+    el.onclick = e => {
+      e.stopPropagation();
+      const list = getList();
+      const i = list.indexOf(el.dataset.rm);
+      if(i >= 0) list.splice(i, 1);
+      onChange();
+    };
+  });
+  const addBtn = wrap.querySelector('[data-act="add-tag"]');
+  const input = wrap.querySelector(".f-tag-input");
+  if(!addBtn || !input) return;
+  addBtn.onclick = () => { input.style.display = "inline-block"; input.value = ""; input.focus(); };
+  input.onkeydown = e => {
+    if(e.key === "Enter"){
+      e.preventDefault();
+      const v = input.value.trim();
+      if(!v) return;
+      const list = getList();
+      if(!list.includes(v)) list.push(v);
+      onChange();
+    }else if(e.key === "Escape"){
+      input.value = ""; input.style.display = "none";
+    }
+  };
+}
+
+function bindRows(){
+  const rows = [...$("platRows").querySelectorAll("tr[data-code]")];
+  const groups = new Map();
+  for(const tr of rows){
+    if(!groups.has(tr.dataset.code)) groups.set(tr.dataset.code, []);
+    groups.get(tr.dataset.code).push(tr);
+  }
+  for(const [code, group] of groups){
+    const first = group[0];
+    const cur = () => DRAFT[first.dataset.code];
+
+    const codeEl = first.querySelector(".fCode");
+    if(codeEl){
+      codeEl.oninput = () => {
+        const oldKey = first.dataset.code;
+        const newKey = codeEl.value.trim();
+        if(!newKey || newKey === oldKey) return;
+        if(DRAFT[newKey]){ codeEl.style.color = "#d33b3b"; return; }
+        codeEl.style.color = "";
+        DRAFT[newKey] = DRAFT[oldKey];
+        DRAFT[newKey].code = newKey;
+        delete DRAFT[oldKey];
+        for(const tr of group) tr.dataset.code = newKey;
+      };
+    }
+
+    const bindShared = (sel, key) => {
+      const el = first.querySelector(sel);
+      if(!el) return;
+      el.oninput = () => { const d = cur(); if(d) d[key] = el.value; };
+    };
+    bindShared(".fShort", "shortName");
+    bindShared(".fName", "name");
+    bindShared(".fNote", "note");
+
+    // 平台级标签
+    bindTagsEditor(first.querySelector(".plat-tags-cell"),
+      () => { const d = cur(); if(d && !d.tags) d.tags = []; return d ? d.tags : []; },
+      renderRows);
+
+    // 地址条目：标签 + baseUrl
+    for(const tr of group){
+      const idx = +tr.dataset.ep;
+      const urlEl = tr.querySelector(".fUrlBase");
+      if(urlEl) urlEl.oninput = () => { const d = cur(); if(d && d.endpoints[idx]) d.endpoints[idx].baseUrl = urlEl.value; };
+      const envEl = tr.querySelector(".fEnv");
+      if(envEl) envEl.oninput = () => {
+        const d = cur();
+        if(!d || !d.endpoints[idx]) return;
+        const v = envEl.value.trim();
+        d.endpoints[idx].tags = v ? [v] : [];   // 一个地址对应一个环境
+      };
+    }
+
+    first.querySelector('[data-act="insecure"]').onclick = () => {
+      const d = cur(); if(!d) return;
+      d.insecure = !d.insecure; renderRows();
+    };
+    first.querySelector('[data-act="follow"]').onclick = () => {
+      const d = cur(); if(!d) return;
+      d.follow = !d.follow; renderRows();
+    };
+    first.querySelector('[data-act="anyScheme"]').onclick = () => {
+      const d = cur(); if(!d) return;
+      d.anyScheme = !d.anyScheme; renderRows();
+    };
+    first.querySelector(".f-add-ep").onclick = () => {
+      const d = cur(); if(!d) return;
+      d.endpoints.push(emptyEp());
+      renderRows();
+    };
+    first.querySelector(".f-del").onclick = () => toggleDelete(first.dataset.code);
+  }
+}
+
+function toggleDelete(code){
+  const d = DRAFT[code];
+  if(d._new){ delete DRAFT[code]; }
+  else { d._deleted = !d._deleted; }
+  renderRows();
+}
+
+function removMulti-Service InvokerTag(tr, t){
+  const c = tr.dataset.code;
+  if(!DRAFT[c]) return;
+  DRAFT[c].tags = (DRAFT[c].tags || []).filter(x => x !== t);
+  renderRows();
+}
+
+function addPlatform(){
+  let n = 1, base = "new-platform", code = base;
+  while(DRAFT[code]){ n++; code = base + "-" + n; }
+  DRAFT[code] = {
+    code, name: "", shortName: "", deployment: "merged",
+    insecure: false, follow: false, anyScheme: false, note: "",
+    endpoints: [emptyEp()],
+    _new: true, _deleted: false,
+  };
+  renderRows();
+  $("platRows").querySelector(`tr[data-code="${code}"]`)?.querySelector(".fCode")?.focus();
+}
+
+async function boot(){
+  const data = await getJSON("/api/platforms");
+  PLATFORMS = data.platforms;
+  DRAFT = snapshotToDraft(PLATFORMS);
+  renderRows();
+}
+
+function collectItems(){
+  const items = [];
+  for(const code of Object.keys(DRAFT)){
+    const d = DRAFT[code];
+    if(d._deleted){
+      items.push({code: d.code, _deleted: true});
+      continue;
+    }
+    // 地址条目：只保留填了 baseUrl 的；标签原样带上
+    const endpoints = (d.endpoints || [])
+      .filter(ep => (ep.baseUrl || "").trim())
+      .map(ep => ({
+        tags: (ep.tags || []).filter(t => String(t).trim()),
+        baseUrl: ep.baseUrl.trim(),
+      }));
+    items.push({
+      code: d.code,
+      name: d.name,
+      shortName: d.shortName,
+      deployment: d.deployment,
+      insecure: d.insecure,
+      follow: d.follow,
+      anyScheme: d.anyScheme,
+      note: d.note,
+      // 平台自身标签（地址条目自己的标签在各条目里，两者在匹配时取并集）
+      tags: (d.tags || []).filter(t => String(t).trim()),
+      endpoints,
+    });
+  }
+  return items;
+}
+
+async function save(){
+  const items = collectItems();
+  const seen = new Set();
+  for(const it of items){
+    if(it._deleted) continue;
+    if(!it.code || !it.code.trim()){
+      note("存在编码为空的行，请先填写或删除该行。", "err"); return;
+    }
+    if(seen.has(it.code)){ note(`编码重复：${it.code}`, "err"); return; }
+    seen.add(it.code);
+    if(!it.name || !it.name.trim()){
+      note(`平台 ${it.code} 缺少完整名称。`, "err"); return;
+    }
+    if(!it.endpoints.length){
+      note(`平台 ${it.code} 至少需要一个地址条目。`, "err"); return;
+    }
+    for(const ep of it.endpoints){
+      if(!/^https?:\/\//.test(ep.baseUrl)){
+        const label = (ep.tags || []).join("/") || "未命名";
+        note(`平台 ${it.code} 的地址条目【${label}】必须以 http:// 或 https:// 开头：${ep.baseUrl}`, "err"); return;
+      }
+    }
+  }
+  try{
+    const data = await postJSON("/api/platforms/save", {items});
+    PLATFORMS = data.platforms;
+    DRAFT = snapshotToDraft(PLATFORMS);
+    renderRows();
+    // 与「服务定义 / 保存」同一套反馈：顶部居中 toast、用户语言、不暴露备份文件名（见 R050）
+    const deleted = (data.deleted || []).length;
+    const warns = data.warnings || [];
+    const toastText = `已保存 ${PLATFORMS.length} 个节点` +
+                      (deleted ? `，删除 ${deleted} 个` : "") +
+                      (warns.length ? `\n提示：${warns.join("；")}` : "");
+    showToast({text: toastText, kind: warns.length ? "warn" : "ok"});
+  }catch(err){
+    note("<b>保存失败：</b>" + escapeHtml(err.message || String(err)), "err");
+  }
+}
+
+document.getElementById("save").onclick = save;
+document.getElementById("addPlat").onclick = addPlatform;
+document.getElementById("filter").oninput = (e) => { FILTER.kw = e.target.value; applyFilter(); };
+
+boot().catch(err => note("<b>加载失败：</b>" + escapeHtml(err.message || String(err)) +
+  "<br>请确认 <code>python3 query.py serve</code> 正在运行，并通过 <code>http://127.0.0.1:8765/platforms</code> 访问本页。", "err"));
+</script>
+</body>
+</html>

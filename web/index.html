@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multi-Service Invoker</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header>
+  <h1>Multi-Service Invoker</h1>
+  <nav id="tabNav">
+    <button data-tab="call" class="on">调用</button>
+    <button data-tab="services">调用项定义</button>
+    <button data-tab="platforms">节点列表</button>
+    <button data-tab="templates">URL 模板</button>
+  </nav>
+</header>
+
+<main>
+  <div class="banner err" id="banner" hidden></div>
+  <div id="tabBody">
+
+  <section class="tab-panel" data-tab="call">
+  <section class="card">
+    <h2>调用条件
+      <span style="flex:1"></span>
+      <div class="seg" id="modeSeg">
+        <button data-mode="single" class="on">单调用项</button>
+        <button data-mode="multi">多调用项</button>
+      </div>
+    </h2>
+    <div class="row" style="align-items:flex-start">
+      <div class="field svc-combo">
+        <label id="svcLabel">调用项</label>
+        <div id="svcChips" class="svc-chips"></div>
+        <input type="text" id="svcCombo" autocomplete="off" placeholder="输入关键词过滤 / 拼音首字母 / 标签" />
+        <input type="hidden" id="service" />
+        <div class="svc-suggest" id="svcSuggest" hidden></div>
+      </div>
+      <div class="field">
+        <label>环境</label>
+        <select id="tagPick"></select>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>请求体
+      <span class="hint" id="bodySource"></span>
+      <span style="flex:1"></span>
+      <div class="seg" id="bodyModeSeg">
+        <button data-mode="form" class="on">按调用项字段</button>
+        <button data-mode="json">JSON</button>
+      </div>
+    </h2>
+    <div id="fieldBox">
+      <div class="req-fields" id="reqFields"></div>
+      <div class="hintline" id="bodyHint"></div>
+    </div>
+    <div id="jsonBox" hidden>
+      <textarea id="body" rows="6" spellcheck="false" placeholder=""></textarea>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>节点选择
+      <span class="hint" id="platCount"></span>
+      <span style="flex:1"></span>
+      <input type="text" id="platFilter" placeholder="搜索编码 / 名称 / 域名 / 简称" style="min-width:240px" />
+      <button class="btn" id="selAll">全选</button>
+      <button class="btn" id="selNone">全不选</button>
+      <button class="btn" id="selShown">只选筛选项</button>
+    </h2>
+    <div class="tag-filter" id="tagFilter"></div>
+    <div class="plats" id="plats"></div>
+  </section>
+
+  <section class="card">
+    <h2>请求预览 / 调用结果
+      <span class="hint" id="mode"></span>
+      <span style="flex:1"></span>
+      <div class="field" style="min-width:230px">
+        <select id="pick" title="结果取值路径">
+          <option value="">结果取值路径（跟随调用项默认）</option>
+        </select>
+      </div>
+      <button class="btn" id="exportCsv" disabled>导出 CSV</button>
+      <button class="btn ghost" id="preview">预览请求</button>
+      <button class="btn primary" id="run">开始调用</button>
+    </h2>
+    <div class="stats" id="stats"></div>
+    <div id="resultBox"><div class="empty">选好调用项与平台后，点「预览请求」或「开始调用」。</div></div>
+  </section>
+</section>
+<section class="tab-panel" data-tab="services" hidden></section>
+<section class="tab-panel" data-tab="platforms" hidden></section>
+<section class="tab-panel" data-tab="templates" hidden></section>
+</div>
+</main>
+
+<script src="/common.js"></script>
+<script>
+let TAG_ORDER = {};   // 地址标签 → 展示顺序
+let CONFIG = null;
+let TAG_FILTER = "";   // 地址标签筛选，空 = 全部
+let RESULTS = [];
+let MULTI_MODE = false;  // 多服务模式开关（不写 localStorage，刷新即重置）
+let SELECTED_CODES = []; // 多服务模式下当前选中的服务编码列表
+let PICK = "";
+let RUNNING = false;
+let ACTIVE_TAGS = new Set();   // 多选 tag 过滤
+let BODY_MODE = "form";        // form=按服务字段填写 / json=直接写 JSON
+let BODY_VALUES = {};          // 字段视图里用户填写的运行时值
+let RAW_BODY = "";             // JSON 视图里无法回填字段时的原文
+
+const $ = (id) => document.getElementById(id);
+
+function showBanner(html){ showNote($("banner"), html, "err"); }
+
+/* ------------------------------------------------------------- 初始化 */
+async function boot(){
+  if(location.protocol === "file:" && !API_BASE){
+    showBanner(
+      "<b>页面没有连接到核心。</b><br>" +
+      "这里点按钮不会有反应，因为还不知道要调用哪个核心。<br>" +
+      "任选一种：<br>" +
+      "① 直接运行 <code>multi-invoker</code>（或 <code>python3 query.py serve</code>），" +
+      "再用它打开的地址访问；<br>" +
+      "② 在地址后面加上核心地址：<code>?api=http://192.168.1.10:8765</code>。");
+    return;
+  }
+  CONFIG = await getJSON("/api/config");
+  // 防御：后端可能给 null 而不是空数组，确保后续 .filter/.map 不炸
+  if(!Array.isArray(CONFIG.platforms)) CONFIG.platforms = [];
+  if(!Array.isArray(CONFIG.services)) CONFIG.services = [];
+  buildTagPick();
+  buildServiceOptions();
+  $("svcCombo").oninput = onComboInput;
+  $("svcCombo").onfocus = () => renderSuggestions();
+  setBodyMode("form");
+  $("bodyModeSeg").onclick = e => {
+    const btn = e.target.closest("button");
+    if(btn) setBodyMode(btn.dataset.mode);
+  };
+  $("body").oninput = () => {
+    if(BODY_MODE === "json") syncFieldsFromJson();
+  };
+  document.addEventListener("click", e => {
+    if(!e.target.closest(".svc-combo")) $("svcSuggest").hidden = true;
+  });
+  renderTagFilter();
+  renderPlatforms();
+  hideNote($("banner"));
+}
+
+/* 环境下拉：选项从平台地址条目的 tags 汇总得到（数据驱动）。
+   同一个域名以后加别的环境，这里会自动多一个选项。 */
+function allEndpointTags(){
+  const set = new Set();
+  for(const p of (CONFIG?.platforms || []))
+    for(const ep of (p.endpoints || []))
+      for(const tg of (ep.tags || [])) set.add(tg);
+  return [...set].sort();
+}
+
+function buildTagPick(){
+  const tags = allEndpointTags();
+  TAG_ORDER = Object.fromEntries(tags.map((tg, i) => [tg, i]));
+  $("tagPick").innerHTML = [`<option value="">全部环境</option>`].concat(
+    tags.map(tg => `<option value="${escapeHtml(tg)}">${escapeHtml(tg)}</option>`)).join("");
+  TAG_FILTER = "";
+}
+
+function currentService(){
+  return (CONFIG?.services || []).find(s => s.code === $("service").value) || null;
+}
+
+function primaryService(){
+  // 多服务模式下 pick 下拉与 bodyFields 都按第一个已选服务渲染
+  const code = SELECTED_CODES[0] || $("service").value;
+  return (CONFIG?.services || []).find(s => s.code === code) || currentService();
+}
+
+function currentServiceCodes(){
+  // 多服务模式：以 SELECTED_CODES 为准；单服务模式：从 hidden #service 单值包装成数组
+  if(MULTI_MODE) return SELECTED_CODES.slice();
+  const code = $("service").value;
+  return code ? [code] : [];
+}
+
+function buildServiceOptions(){
+  // 第一次进入页面时，单服务模式下默认选第一个；多服务模式需要用户主动挑
+  if(!MULTI_MODE && CONFIG?.services?.length){
+    SELECTED_CODES = [CONFIG.services[0].code];
+  }
+  renderChips();
+  renderSuggestions();
+  if(!MULTI_MODE && CONFIG?.services?.length){
+    selectService(CONFIG.services[0].code);
+  }else{
+    renderBodyFields();
+    renderPickOptions();
+  }
+}
+
+function setMode(mode){
+  MULTI_MODE = (mode === "multi");
+  [...$("modeSeg").children].forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("svcLabel").textContent = MULTI_MODE ? "调用项（可勾多个）" : "调用项（服务）";
+  $("svcCombo").value = "";
+  $("svcCombo").placeholder = MULTI_MODE
+    ? "搜索 → 点列表项追加；可继续点其他项追加"
+    : "输入关键词过滤 / 拼音首字母 / 标签";
+  if(!MULTI_MODE && SELECTED_CODES.length){
+    // 切回单服务：保留第一项为当前选择
+    selectService(SELECTED_CODES[0]);
+  }else{
+    renderChips();
+    renderSuggestions();
+    renderBodyFields();
+    renderPickOptions();
+  }
+}
+
+function selectService(code){
+  // 单服务模式：单选
+  $("service").value = code;
+  SELECTED_CODES = code ? [code] : [];
+  const svc = currentService();
+  $("svcCombo").value = svc ? `${svc.code} — ${svc.name || ""}` : "";
+  BODY_VALUES = {};
+  RAW_BODY = "";
+  $("body").value = "";
+  renderChips();
+  renderBodyFields();
+  renderPickOptions();
+  $("svcSuggest").hidden = true;
+}
+
+function toggleService(code){
+  // 多服务模式：点击切换勾选状态
+  const idx = SELECTED_CODES.indexOf(code);
+  if(idx >= 0) SELECTED_CODES.splice(idx, 1);
+  else SELECTED_CODES.push(code);
+  renderChips();
+  // 清空搜索框并重新列出全部候选，方便连续追加（列表里已选中的会高亮）
+  $("svcCombo").value = "";
+  renderSuggestions();
+  // 请求体渲染按第一个已选服务走（各服务仍按自己的 bodyFields 拼装）
+  renderBodyFields();
+  renderPickOptions();
+}
+
+function renderChips(){
+  const box = $("svcChips");
+  if(!MULTI_MODE){
+    // 单服务模式不显示 chip 列表（沿用 combobox 显示文本）
+    box.innerHTML = "";
+    return;
+  }
+  const services = CONFIG?.services || [];
+  box.innerHTML = SELECTED_CODES.length
+    ? SELECTED_CODES.map(code => {
+        const svc = services.find(s => s.code === code);
+        const label = svc ? `${svc.code} — ${svc.name || ""}` : code;
+        return `<span class="svc-chip" data-code="${escapeHtml(code)}">
+          ${escapeHtml(label)}
+          <span class="x" data-rm="${escapeHtml(code)}" title="移除">×</span>
+        </span>`;
+      }).join("")
+    : `<span class="hint">还没选，从下面搜索框挑一个</span>`;
+  box.querySelectorAll(".x[data-rm]").forEach(el => {
+    el.onclick = e => { e.stopPropagation(); toggleService(el.dataset.rm); };
+  });
+}
+
+function onComboInput(){
+  // 输入时清空"已选"判断的依据：
+  // 单服务模式下沿用旧逻辑（清空 hidden service）；多服务模式不影响 chip，仅刷新建议列表
+  if(!MULTI_MODE) $("service").value = "";
+  renderSuggestions();
+}
+
+function renderSuggestions(){
+  const kw = $("svcCombo").value.trim().toLowerCase();
+  const all = CONFIG?.services || [];
+  const pinyinInitials = (s) => s.replace(/[^a-z]/g, "");
+  let filtered = all;
+  if(kw){
+    filtered = all.filter(s => {
+      const hay = `${s.code} ${s.name || ""} ${(s.tags || []).join(" ")}`.toLowerCase();
+      if(hay.includes(kw)) return true;
+      const ci = pinyinInitials(s.code);
+      if(ci.startsWith(kw)) return true;
+      return false;
+    });
+  }
+  const html = filtered.length ? filtered.map(s => {
+    const on = MULTI_MODE && SELECTED_CODES.includes(s.code);
+    return `<div class="svc-suggest-item ${on ? "on" : ""}" data-code="${escapeHtml(s.code)}">
+      <div class="nm">${escapeHtml(s.code)} — ${escapeHtml(s.name || "")}</div>
+      ${(s.tags || []).length ? `<div class="tg">${(s.tags || []).map(escapeHtml).join(" · ")}</div>` : ""}
+    </div>`;
+  }).join("") : `<div class="empty">没有匹配的调用项</div>`;
+  const sg = $("svcSuggest");
+  sg.innerHTML = html;
+  sg.hidden = false;
+  sg.querySelectorAll(".svc-suggest-item").forEach(el => {
+    el.onclick = e => {
+      e.stopPropagation();
+      if(MULTI_MODE) toggleService(el.dataset.code);
+      else selectService(el.dataset.code);
+    };
+  });
+}
+
+/* ------------------------------------------------- 请求体：按服务字段填写 */
+function serviceBodySpec(svc){
+  if(!svc) return [];
+  const fields = Array.isArray(svc.bodyFields) ? svc.bodyFields.filter(f => f && f.name) : [];
+  if(fields.length){
+    return fields.map(f => ({name: f.name, def: f.default}));
+  }
+  const body = svc.body;
+  if(body && typeof body === "object" && !Array.isArray(body)){
+    return Object.keys(body).map(k => ({name: k, def: body[k]}));
+  }
+  return [];
+}
+
+function fieldValue(name, def){
+  if(name in BODY_VALUES) return BODY_VALUES[name];
+  return def === undefined ? null : def;
+}
+
+function renderBodyFields(){
+  const svc = primaryService();
+  const spec = serviceBodySpec(svc);
+  const box = $("reqFields");
+  if(!spec.length){
+    box.innerHTML = `<div class="empty">该服务还没有配置请求体字段，可切到「JSON」直接填写。</div>`;
+  }else{
+    box.innerHTML = `<table><thead><tr><th style="width:34%">字段</th><th>值</th></tr></thead><tbody>` +
+      spec.map(f => {
+        const value = fieldValue(f.name, f.def);
+        const text = value === null || value === undefined ? "" : String(value);
+        const defText = f.def === undefined || f.def === null ? "" : String(f.def);
+        return `<tr>
+          <td class="mono">${escapeHtml(f.name)}${defText ? `<span class="deftag">默认 ${escapeHtml(defText)}</span>` : ""}</td>
+          <td><input type="text" class="fieldInput" data-name="${escapeHtml(f.name)}" value="${escapeHtml(text)}" placeholder="${escapeHtml(defText)}" /></td>
+        </tr>`;
+      }).join("") + `</tbody></table>`;
+    box.querySelectorAll(".fieldInput").forEach(input => {
+      input.oninput = () => {
+        BODY_VALUES[input.dataset.name] = input.value;
+        syncJsonPreview();
+      };
+    });
+  }
+  $("bodySource").textContent = RAW_BODY.trim()
+    ? "将按 JSON 原文发送"
+    : (spec.length ? "" : "按 JSON 填写");
+  syncJsonPreview();
+}
+
+function buildBodyObject(){
+  const out = {};
+  for(const f of serviceBodySpec(primaryService())){
+    const value = fieldValue(f.name, f.def);
+    if(value === undefined) continue;
+    out[f.name] = value;
+  }
+  return out;
+}
+
+/* 字段视图 → JSON 视图同步（原始 JSON 优先，避免丢掉调用项定义之外的字段） */
+function syncJsonPreview(){
+  if(BODY_MODE !== "form") return;
+  $("body").value = RAW_BODY || JSON.stringify(buildBodyObject(), null, 2);
+  $("bodyHint").textContent = "";
+  $("bodyHint").style.color = "";
+}
+
+/* JSON 视图 → 字段视图同步：只有是 JSON 对象时才回填 */
+function syncFieldsFromJson(){
+  const text = $("body").value.trim();
+  const hint = $("bodyHint");
+  if(!text){
+    BODY_VALUES = {};
+    renderBodyFields();
+    return;
+  }
+  let parsed;
+  try{
+    parsed = JSON.parse(text);
+  }catch(err){
+    hint.textContent = "";
+    hint.style.color = "";
+    return;
+  }
+  if(parsed && typeof parsed === "object" && !Array.isArray(parsed)){
+    const spec = serviceBodySpec(primaryService());
+    const known = new Set(spec.map(f => f.name));
+    if(spec.length && Object.keys(parsed).some(k => !known.has(k))){
+      // 出现了调用项定义之外的键：按原始 JSON 发送，字段视图不覆盖
+      RAW_BODY = text;
+      return;
+    }
+    RAW_BODY = "";
+    BODY_VALUES = {};
+    for(const [k, v] of Object.entries(parsed)){
+      BODY_VALUES[k] = v === null || v === undefined ? "" : v;
+    }
+    renderBodyFields();
+  }else{
+    RAW_BODY = text;
+  }
+}
+
+function setBodyMode(mode){
+  if(mode === BODY_MODE){
+    [...$("bodyModeSeg").children].forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+    $("fieldBox").hidden = mode !== "form";
+    $("jsonBox").hidden = mode !== "json";
+    return;
+  }
+  if(mode === "json"){
+    // 进入 JSON 视图前，把当前字段值渲染成 JSON 文本
+    $("body").value = RAW_BODY || JSON.stringify(buildBodyObject(), null, 2);
+  }else{
+    // 回到字段视图：JSON 是对象就回填字段，否则保留原文按 raw body 发送
+    syncFieldsFromJson();
+  }
+  BODY_MODE = mode;
+  [...$("bodyModeSeg").children].forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("fieldBox").hidden = mode !== "form";
+  $("jsonBox").hidden = mode !== "json";
+  if(mode === "json"){
+    $("bodyHint").textContent = "";
+    $("bodyHint").style.color = "";
+  }else{
+    syncJsonPreview();
+  }
+}
+
+/* --------------------------------------------- 取值路径：按服务回参配置选择 */
+function renderPickOptions(){
+  const svc = primaryService();
+  const sel = $("pick");
+  // 只列出勾选了「可取值」的回参；层级按点号缩进展示，父项后面注明「含 N 个子级」
+  const fields = (svc && Array.isArray(svc.responseFields)) ? svc.responseFields : [];
+  const picked = fields.filter(r => r.pick !== false && (r.path || "").trim());
+  const childCount = new Map();
+  for(const r of picked){
+    for(const c of picked){
+      if(c.path !== r.path && c.path.startsWith(r.path + ".")){
+        childCount.set(r.path, (childCount.get(r.path) || 0) + 1);
+      }
+    }
+  }
+  const opts = [`<option value="">结果取值路径（不取值）</option>`];
+  for(const r of picked){
+    const depth = Math.max(0, (r.path || "").split(".").length - 1);
+    const indent = "　".repeat(Math.min(depth, 6));
+    const n = childCount.get(r.path) || 0;
+    const note = r.note ? `（${r.note}）` : "";
+    const childMark = n > 0 ? `（含 ${n} 个子级）` : "";
+    const label = [r.name || r.path, r.path].filter(Boolean).join(" · ") + note + childMark;
+    opts.push(`<option value="${escapeHtml(r.path)}">${escapeHtml(indent + label)}</option>`);
+  }
+  opts.push(`<option value="__custom__">自定义路径…</option>`);
+  sel.innerHTML = opts.join("");
+  // 切换服务时尊重用户已有的选择：
+  //  1. 默认值 = 服务配置的 svc.pick(若能命中下拉里的可选项)
+  //  2. 否则 = 第一个已勾选的可取值(避免"服务勾了一堆,结果还全展示"这种反直觉默认)
+  //  3. 再否则 = "" (下拉里的"不取值"项)
+  // 这样「我勾了一个取值」就只展示那一个,与后端语义对齐。
+  let defaultPick = ((svc && svc.pick) || "").trim();
+  if(!picked.some(r => r.path === defaultPick)){
+    defaultPick = picked.length ? picked[0].path : "";
+  }
+  sel.value = defaultPick;
+  sel.onchange = () => {
+    if(sel.value === "__custom__"){
+      const custom = prompt("输入 JSON 点号路径，例如 __sys__.msg", "");
+      if(custom && custom.trim()){
+        const opt = document.createElement("option");
+        opt.value = custom.trim();
+        opt.textContent = custom.trim();
+        sel.insertBefore(opt, sel.lastElementChild);
+        sel.value = custom.trim();
+      }else{
+        sel.value = "";
+      }
+    }
+    sel.title = sel.value || "结果取值路径（不取值）";
+  };
+  sel.title = "结果取值路径（不取值）";
+}
+
+/* 平台的地址条目列表：每条自带标签，只保留 baseUrl */
+function endpointsOf(p){
+  const raw = p.endpoints;
+  if(Array.isArray(raw)) return raw.filter(ep => ep && ep.baseUrl);
+  // 兼容尚未迁移的旧 dict 形态
+  if(raw && typeof raw === "object"){
+    return Object.entries(raw).filter(([, v]) => v && v.baseUrl)
+      .map(([k, v]) => ({tags: [k], baseUrl: v.baseUrl}));
+  }
+  return [];
+}
+function endpointTextOf(p){
+  return endpointsOf(p).map(ep =>
+    ((ep.tags || []).length ? (ep.tags.join("/") + " ") : "") + ep.baseUrl).join("　");
+}
+
+function renderPlatforms(){
+  if(!CONFIG) return;
+  const kw = $("platFilter").value.trim().toLowerCase();
+  const box = $("plats");
+  const checked = new Set([...box.querySelectorAll("input:checked")].map(i => i.value));
+  const first = box.children.length === 0;
+  const filtered = CONFIG.platforms.filter(p => {
+    if(ACTIVE_TAGS.size && !((p.tags || []).some(t => ACTIVE_TAGS.has(t)))) return false;
+    if(!kw) return true;
+    return [p.code, p.name, p.shortName, endpointTextOf(p)]
+      .filter(Boolean).join(" ").toLowerCase().includes(kw);
+  });
+  box.innerHTML = filtered.map(p => {
+    const on = first || checked.has(p.code);
+    // 每个地址条目一行，按当前标签筛选只显示匹配的
+    const lines = [];
+    endpointsOf(p).forEach(ep => {
+      if(TAG_FILTER && !(ep.tags || []).includes(TAG_FILTER)) return;
+      const badge = (ep.tags || []).map(tg => `<b>${escapeHtml(tg)}</b>`).join("") || "<b>地址</b>";
+      lines.push(`<span class="ep">${badge}${escapeHtml(ep.baseUrl)}</span>`);
+    });
+    if(!lines.length) lines.push(`<span class="ep">（没有匹配的地址）</span>`);
+    const display = p.displayName || p.name;
+    const tags = (p.insecure ? '<span class="tag opt">忽略证书</span>' : "")
+               + (p.follow ? '<span class="tag opt">跟随跳转</span>' : "")
+               + (p.anyScheme ? '<span class="tag opt">忽略协议</span>' : "");
+    const platTags = (p.tags || []).map(t => `<span class="tag plat-tag">${escapeHtml(t)}</span>`).join("");
+    return `<label class="plat">
+      <input type="checkbox" value="${p.code}" ${on ? "checked" : ""} />
+      <span class="meta">
+        <span class="nm">${platTags}${escapeHtml(display)}${tags}</span>
+        <span class="dm"><span class="code">${escapeHtml(p.code)}</span>${lines.join("")}</span>
+      </span></label>`;
+  }).join("") || `<div class="empty">没有匹配的域名</div>`;
+  updateCount();
+  applyTagChipFilter();
+}
+
+function updateCount(){
+  const all = $("plats").querySelectorAll("input").length;
+  const on = $("plats").querySelectorAll("input:checked").length;
+  $("platCount").textContent = `已选 ${on} / ${all}` + (ACTIVE_TAGS.size ? `（标签过滤：${ACTIVE_TAGS.size}）` : "");
+}
+
+function setAll(fn){
+  $("plats").querySelectorAll("input").forEach(i => { i.checked = fn(i.value); });
+  updateCount();
+}
+
+function renderTagFilter(){
+  const tags = new Set();
+  for(const p of CONFIG?.platforms || []) for(const t of (p.tags || [])) tags.add(t);
+  const list = [...tags].sort();
+  const html = list.length
+    ? `<span class="tagfilter-label">按标签过滤：</span>` +
+      list.map(t => `<span class="filter-chip ${ACTIVE_TAGS.has(t) ? "on" : ""}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join("") +
+      (ACTIVE_TAGS.size ? `<button class="btn-mini" id="tagClear">清除</button>` : "")
+    : `<span class="legend">节点没有打标签（可在「节点列表」页编辑）</span>`;
+  const box = $("tagFilter");
+  box.innerHTML = html;
+  box.querySelectorAll(".filter-chip").forEach(ch => {
+    ch.onclick = () => {
+      const t = ch.dataset.tag;
+      if(ACTIVE_TAGS.has(t)) ACTIVE_TAGS.delete(t); else ACTIVE_TAGS.add(t);
+      renderPlatforms();
+      renderTagFilter();
+    };
+  });
+  $("tagClear")?.addEventListener("click", () => {
+    ACTIVE_TAGS.clear();
+    renderPlatforms();
+    renderTagFilter();
+  });
+}
+
+function applyTagChipFilter(){
+  // 让"搜索框+标签"协同：仅控制渲染，selected 状态保留
+  updateCount();
+}
+
+function bind(){
+  $("tagPick").onchange = e => {
+    TAG_FILTER = e.target.value || "";
+    renderPlatforms();
+  };
+  $("platFilter").oninput = renderPlatforms;
+  $("plats").onchange = updateCount;
+  $("selAll").onclick = () => setAll(() => true);
+  $("selNone").onclick = () => setAll(() => false);
+  // 只选当前筛选结果（按标签 / 关键词过滤后仍显示的域名），与具体标签无关
+  $("selShown").onclick = () => {
+    const shown = new Set([...$("plats").querySelectorAll(".plat input")].map(i => i.value));
+    setAll(c => shown.has(c));
+  };
+  $("preview").onclick = previewQuery;
+  $("run").onclick = runQuery;
+  $("exportCsv").onclick = exportCsv;
+  $("modeSeg").onclick = e => {
+    const btn = e.target.closest("button[data-mode]");
+    if(btn) setMode(btn.dataset.mode);
+  };
+}
+
+function selectedPlatforms(){
+  return [...$("plats").querySelectorAll("input:checked")].map(i => i.value);
+}
+
+function requestPayload(extra){
+  const codes = currentServiceCodes();
+  const payload = {
+    endpointTags: TAG_FILTER ? [TAG_FILTER] : [],
+    platforms: selectedPlatforms(),
+    pick: $("pick").value.trim()
+  };
+  if(MULTI_MODE){
+    payload.serviceCodes = codes;
+  }else{
+    payload.serviceCode = codes[0] || "";
+  }
+  if(RAW_BODY.trim()){
+    // 出现了调用项定义之外的字段 → 按这段 JSON 原样发送
+    payload.body = RAW_BODY;
+  }else{
+    payload.bodyFieldValues = BODY_VALUES;
+  }
+  return Object.assign(payload, extra || {});
+}
+
+function requestEndpoint(){
+  // 多服务模式走 /api/query/batch；单服务走老路径
+  return MULTI_MODE ? "/api/query/batch" : "/api/query";
+}
+
+function guard(){
+  if(!CONFIG){
+    showBanner("配置还没加载成功，无法调用。请确认页面是通过 <code>http://127.0.0.1:8765/</code> 打开的，" +
+               "并且 <code>python3 query.py serve</code> 仍在运行。");
+    return false;
+  }
+  if(!currentServiceCodes().length){
+    alert("请选择调用项"); return false;
+  }
+  if(!selectedPlatforms().length){ alert("请至少选择一个节点"); return false; }
+  return true;
+}
+
+/* --------------------------------------------------------- 预览请求 */
+async function previewQuery(){
+  if(RUNNING || !guard()) return;
+  const btn = $("preview");
+  btn.disabled = true; btn.textContent = "生成中…";
+  $("mode").textContent = "预览模式（未发送任何请求）";
+  $("stats").innerHTML = "";
+  $("resultBox").innerHTML = `<div class="empty">正在组装请求…</div>`;
+  try{
+    const data = await postJSON(MULTI_MODE ? "/api/preview/batch" : "/api/preview", requestPayload());
+    const rows = data.results || [];
+    const bad = rows.filter(r => r.status === "config_error").length;
+    const tagText = (data.tagFilter || []).join(" + ") || "全部";
+    const svcSummary = MULTI_MODE
+      ? `${(data.serviceCodes || []).length} 个调用项`
+      : `调用项 <b>${escapeHtml((data.service || {}).code || "")}</b>`;
+    const bodyFmt = MULTI_MODE
+      ? "各服务取自身配置"
+      : escapeHtml((data.service || {}).bodyFormat || "json");
+    $("stats").innerHTML = `<span>${svcSummary}</span>
+      <span>地址标签 <b>${escapeHtml(tagText)}</b></span>
+      <span>共 <b>${rows.length}</b> 条请求</span>
+      <span>请求体格式 <b>${bodyFmt}</b></span>
+      ${bad ? `<span style="color:#8a94a6">配置缺失 <b>${bad}</b> 条</span>` : ""}`;
+    renderPlan($("resultBox"), rows, {multiMode: MULTI_MODE});
+    hideNote($("banner"));
+  }catch(err){
+    showBanner("<b>预览失败：</b>" + escapeHtml(err.message || String(err)));
+  }finally{
+    btn.disabled = false; btn.textContent = "预览请求";
+  }
+}
+
+/* --------------------------------------------------------- 真正调用 */
+async function runQuery(){
+  if(RUNNING || !guard()) return;
+  const platforms = selectedPlatforms();
+  const btn = $("run");
+  RUNNING = true;
+  btn.disabled = true;
+  RESULTS = [];
+  PICK = $("pick").value.trim();
+  $("mode").textContent = "调用结果（实时刷新）";
+  // 每个平台的实际地址条目数（用于进度总数估算）
+  const envCount = Math.max(1, Math.round(selectedPlatforms().reduce((n, c) => {
+    const p = (CONFIG.platforms || []).find(x => x.code === c);
+    return n + (p ? endpointsOf(p).filter(ep => !TAG_FILTER || (ep.tags || []).includes(TAG_FILTER)).length : 1);
+  }, 0) / Math.max(1, selectedPlatforms().length)));
+  const started = Date.now();
+  const counts = {ok:0, "http_error":0, "network_error":0, "config_error":0};
+  let finished = 0, total = platforms.length * envCount, done = false;
+
+  const tick = () => {
+    const sec = ((Date.now() - started) / 1000).toFixed(1);
+    btn.textContent = done ? "开始调用" : `调用中 ${sec}s`;
+    $("stats").innerHTML = `<span>请求 <b>${finished}</b> / ${total}</span>
+      <span style="color:#0f9d58">成功 <b>${counts.ok}</b></span>
+      <span style="color:#c77700">HTTP错误 <b>${counts.http_error}</b></span>
+      <span style="color:#d33b3b">网络失败 <b>${counts.network_error}</b></span>
+      <span style="color:#8a94a6">未发起（参数未补齐）<b>${counts.config_error}</b></span>
+      <span>已用时 <b>${sec}s</b></span>` + (done ? "" : "　<span style='color:#1a5fd0'>调用中，结果实时刷新…</span>");
+  };
+
+  $("resultBox").innerHTML = tableSkeleton();
+  tick();
+  const timer = setInterval(tick, 200);
+
+  try{
+    const res = await fetch(apiUrl(requestEndpoint()), {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(requestPayload({stream: true}))
+    });
+    if(!res.ok){
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}：${text.slice(0, 300)}`);
+    }
+    const onMeta = m => { total = m.total || total; };
+    const onResult = r => {
+      finished++;
+      if(counts[r.status] !== undefined) counts[r.status]++;
+      RESULTS.push(r);
+      appendRow(r);
+      tick();
+    };
+    const onDone = () => { done = true; renderRows(); tick(); };
+
+    const ctype = res.headers.get("Content-Type") || "";
+    if(ctype.includes("ndjson") && res.body && res.body.getReader){
+      await readStream(res, onMeta, onResult, onDone);
+    }else{
+      const data = await res.json();
+      total = (data.results || []).length;
+      (data.results || []).forEach(onResult);
+      onDone();
+    }
+    hideNote($("banner"));
+    $("exportCsv").disabled = RESULTS.length === 0;
+  }catch(err){
+    showBanner(`<b>调用失败：</b>${escapeHtml(err.message || String(err))}<br>` +
+      "如果提示 <code>Failed to fetch</code>，多半是 <code>python3 query.py serve</code> 已经停止运行。");
+  }finally{
+    clearInterval(timer);
+    RUNNING = false;
+    btn.disabled = false;
+    btn.textContent = "开始调用";
+  }
+}
+
+async function readStream(res, onMeta, onResult, onDone){
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const handle = line => {
+    line = line.trim();
+    if(!line) return;
+    let msg;
+    try{ msg = JSON.parse(line); }catch(e){ return; }
+    if(msg.type === "meta") onMeta(msg.data);
+    else if(msg.type === "result") onResult(msg.data);
+    else if(msg.type === "done") onDone(msg.data);
+  };
+  for(;;){
+    const {value, done} = await reader.read();
+    if(done) break;
+    buffer += decoder.decode(value, {stream:true});
+    let idx;
+    while((idx = buffer.indexOf("\n")) >= 0){
+      handle(buffer.slice(0, idx));
+      buffer = buffer.slice(idx + 1);
+    }
+  }
+  handle(buffer);
+}
+
+/* --------------------------------------------------------- 结果渲染 */
+function tableSkeleton(){
+  const showSvc = MULTI_MODE;
+  const svcTh = showSvc ? `<th style="width:160px">调用项</th>` : "";
+  return `<div class="resultwrap"><table>
+    <thead><tr>
+      ${svcTh}
+      <th>平台编码</th><th>平台名称</th><th>标签</th><th>地址标签</th><th>状态</th>
+      <th>HTTP</th><th>耗时ms</th><th>结果 / 取值</th>
+    </tr></thead><tbody id="rows"></tbody></table></div>`;
+}
+
+function rowNodes(r, index){
+  const tr = document.createElement("tr");
+  tr.className = "clickable";
+  tr.dataset.i = index;
+  const showSvc = MULTI_MODE;
+  const svcTd = showSvc
+    ? `<td><span class="svc-chip">${escapeHtml(r.serviceCode || "")}${r.serviceName ? " — " + escapeHtml(r.serviceName) : ""}</span></td>`
+    : "";
+  tr.innerHTML = `
+    ${svcTd}
+    <td>${escapeHtml(r.platformCode)}</td>
+    <td>${escapeHtml(r.platformName)}</td>
+    <td>${(r.platformTags || []).map(tg => `<span class="tag">${escapeHtml(tg)}</span>`).join("") || "-"}</td>
+    <td>${escapeHtml(r.endpointLabel || "")}</td>
+    <td><span class="pill ${r.status}">${STATUS_LABEL[r.status] || r.status}</span></td>
+    <td>${r.httpStatus || "-"}</td>
+    <td>${r.elapsedMs != null ? r.elapsedMs : "-"}</td>
+    <td class="mono">${escapeHtml(cellText(r))}</td>`;
+  const detail = document.createElement("tr");
+  detail.className = "detail";
+  detail.hidden = true;
+  detail.innerHTML = `<td colspan="8">
+    <div class="mono" style="margin-bottom:6px">${escapeHtml(r.method || "")} ${escapeHtml(r.url || "")}
+      ${r.context ? `　应用上下文 <code>${escapeHtml(r.context)}</code>（${escapeHtml((r.contextSource || "").indexOf("rule:") === 0 ? "规则：" + (r.contextSource || "").slice(5) : (MODULE_SOURCE_LABEL[r.contextSource] || r.contextSource || ""))}）` : ""}</div>
+    ${r.error ? `<div style="color:#d33b3b;margin-bottom:6px">${escapeHtml(r.error)}</div>` : ""}
+    ${r.body ? `<pre>${escapeHtml(r.body)}</pre>` : `<div class="empty">无响应内容</div>`}
+  </td>`;
+  tr.onclick = () => { detail.hidden = !detail.hidden; };
+  return [tr, detail];
+}
+
+function cellText(r){
+  // 2026-09 起：按调用项定义里勾选了「可取值」的回参多行展示。
+  // PICK 仅作为「额外勾选」的标记：命中某个父项时后端已展开成所有子项路径（见 runner.collect_pick_values）。
+  if(Array.isArray(r.values) && r.values.length){
+    return r.values.map(v => {
+      const name = (v.name || v.path || "").trim() || "value";
+      const val = (v.value === null || v.value === undefined) ? "-" : String(v.value);
+      return `${name}: ${val}`;
+    }).join("\n");
+  }
+  if(PICK) return (r.value === null || r.value === undefined) ? "-" : String(r.value);
+  return short(r.error || r.body || "");
+}
+
+function appendRow(r){
+  const rows = $("rows");
+  if(!rows) return;
+  rowNodes(r, RESULTS.length - 1).forEach(node => rows.appendChild(node));
+}
+
+function renderRows(){
+  const rows = $("rows");
+  if(!rows) return;
+  const sorted = RESULTS.map((r, i) => ({r, i}))
+    .sort((a, b) => (a.r.serviceCode || "").localeCompare(b.r.serviceCode || "")
+      || (a.r.platformCode).localeCompare(b.r.platformCode)
+      || (TAG_ORDER[(a.r.endpointTags || [])[0]] ?? 9) - (TAG_ORDER[(b.r.endpointTags || [])[0]] ?? 9));
+  rows.innerHTML = "";
+  sorted.forEach(({r, i}) => rowNodes(r, i).forEach(node => rows.appendChild(node)));
+}
+
+/* ------------------------------------------------------------- 导出 */
+function exportCsv(){
+  if(!RESULTS.length) return;
+  const head = ["调用项","平台编码","平台名称","平台标签","地址标签","方法","应用模块","请求地址","状态","HTTP状态码","耗时(ms)","取值","错误信息","响应内容"];
+  const lines = [head.join(",")];
+  const serviceCol = MULTI_MODE
+    ? r => `${r.serviceCode || ""}${r.serviceName ? " — " + r.serviceName : ""}`
+    : () => $("service").value;
+  RESULTS.forEach(r => {
+    // 多值单元格按 `; ` 分隔（Excel 直接打开可读）；旧单值（r.value）兼容
+    const valuesText = Array.isArray(r.values) && r.values.length
+      ? r.values.map(v => `${v.name || v.path || "value"}: ${(v.value === null || v.value === undefined) ? "-" : String(v.value)}`).join("; ")
+      : (r.value != null ? String(r.value) : "");
+    const cells = [serviceCol(r), r.platformCode, r.platformName, (r.platformTags || []).join(" "), r.endpointLabel || "",
+      r.method || "", r.module || "", r.url, STATUS_LABEL[r.status] || r.status,
+      r.httpStatus || "", r.elapsedMs != null ? r.elapsedMs : "", valuesText, r.error || "", r.body || ""]
+      .map(v => `"${String(v).replace(/"/g, '""')}"`);
+    lines.push(cells.join(","));
+  });
+  const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${$("service").value}_${new Date().toISOString().slice(0,19).replace(/[:T]/g,"")}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* -------------------------------------------------------------- Tab 切换
+ * 子页面用 <iframe> 承载，而不是把 HTML 内联进当前文档。
+ * 原因：四个页面各自都有 id="banner" / id="body" / id="stats" / id="plats" …
+ * （实测 16 个重复 id）以及 const $ / let ENV / let BODY_MODE 等重复全局变量。
+ * 内联会在同一文档里撞 id（getElementById 命中错元素）并触发
+ * "Identifier '$' has already been declared" 的 SyntaxError，导致整段脚本不执行。
+ * iframe 天然隔离 DOM 与 JS 作用域，是最稳妥的做法。
+ */
+const TAB_SRC = {
+  services:  "/services",
+  platforms: "/platforms",
+  templates: "/templates",
+};
+
+function tabPanel(name){
+  return document.querySelector('.tab-panel[data-tab="' + name + '"]');
+}
+
+function loadTab(name){
+  if(name === "call") return;                 // 调用页就是本页内容，无需 iframe
+  const panel = tabPanel(name);
+  if(!panel || panel.dataset.loaded === "1") return;
+  const frame = document.createElement("iframe");
+  frame.className = "tab-frame";
+  frame.setAttribute("title", name);
+  frame.setAttribute("src", TAB_SRC[name]);
+  // 同源，可进入文档：去掉子页自带的 <header>，并注入样式让它与首页无缝拼接
+  frame.addEventListener("load", () => {
+    let doc;
+    try{ doc = frame.contentDocument; }catch(err){ doc = null; }
+    if(!doc || !doc.head) return;
+    doc.querySelectorAll("header").forEach(h => h.remove());
+    const style = doc.createElement("style");
+    style.textContent =
+      "main{padding:0 !important;max-width:none !important}" +
+      "body{background:transparent}" +
+      "main > .card:first-child{margin-top:0}";
+    doc.head.appendChild(style);
+    // 自动高度：内容变高时同步 iframe 高度，避免内部出现双滚动条
+    const resize = () => {
+      try{
+        const h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
+        if(h && Math.abs(h - parseInt(frame.style.height || "0", 10)) > 8){
+          frame.style.height = h + "px";
+        }
+      }catch(err){ /* 忽略 */ }
+    };
+    resize();
+    [150, 400, 900].forEach(ms => setTimeout(resize, ms));
+    if(window.ResizeObserver){
+      try{ new ResizeObserver(resize).observe(doc.documentElement); }catch(err){}
+    }
+  });
+  panel.appendChild(frame);
+  panel.dataset.loaded = "1";
+}
+
+function switchTab(name){
+  if(name !== "call" && !TAB_SRC[name]) name = "call";
+  [...$("tabNav").children].forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  ["call"].concat(Object.keys(TAB_SRC)).forEach(k => {
+    const p = tabPanel(k);
+    if(p) p.hidden = (k !== name);
+  });
+  loadTab(name);
+  if(location.hash.slice(1) !== name){
+    history.replaceState(null, "", "#" + name);
+  }
+}
+
+function bindTabs(){
+  $("tabNav").onclick = e => {
+    const btn = e.target.closest("button[data-tab]");
+    if(btn) switchTab(btn.dataset.tab);
+  };
+  window.addEventListener("hashchange", () => switchTab(location.hash.slice(1) || "call"));
+}
+
+/* -------------------------------------------------------------- 启动 */
+bind();
+bindTabs();
+// 支持直接访问 /#services 等深链接
+switchTab(location.hash.slice(1) || "call");
+boot().catch(err => {
+  console.error("[boot] failed:", err && err.stack || err);
+  showBanner("<b>配置加载失败：</b>" + escapeHtml(err.message || String(err)) + "<br>" +
+    "请确认服务仍在运行：<code>python3 query.py serve</code>，" +
+    "然后访问 <code>http://127.0.0.1:8765/</code>。" +
+    (err && err.stack ? `<br><pre style="text-align:left;font-size:11px;color:#5a6878;white-space:pre-wrap">${escapeHtml(err.stack)}</pre>` : ""));
+});
+</script>
+</body>
+</html>

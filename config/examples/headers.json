@@ -1,0 +1,7 @@
+{
+  "defaultHeaders": {
+    "Content-Type": "application/json",
+    "Accept": "*/*"
+  },
+  "bodyFormat": "json"
+}

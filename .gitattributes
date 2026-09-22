@@ -1,0 +1,17 @@
+# 统一换行，避免跨平台协作时整文件 diff
+* text=auto eol=lf
+
+# Windows 脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.svg text
+
+# 构建产物的语言统计不计入
+dist/** linguist-generated=true
+*.pyz binary

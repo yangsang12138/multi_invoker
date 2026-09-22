@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "contextProfiles": [
+      {
+        "name": "默认模板",
+        "context": "/api",
+        "matchTags": [],
+        "priority": 0,
+        "urlTemplate": "{baseUrl}{context}/{serviceCode}"
+      }
+    ]
+  },
+  "platforms": [
+    {
+      "code": "demo-test",
+      "name": "演示环境（测试）",
+      "shortName": "演示测试",
+      "note": "示例节点，请替换成自己的地址",
+      "intranetIp": [],
+      "tags": ["示例"],
+      "insecure": false,
+      "follow": false,
+      "anyScheme": false,
+      "endpoints": [
+        { "tags": ["测试"], "baseUrl": "http://demo-test.example.com" }
+      ]
+    },
+    {
+      "code": "demo-prod",
+      "name": "演示环境（正式）",
+      "shortName": "演示正式",
+      "note": "示例节点，请替换成自己的地址",
+      "intranetIp": [],
+      "tags": ["示例"],
+      "insecure": false,
+      "follow": false,
+      "anyScheme": false,
+      "endpoints": [
+        { "tags": ["正式"], "baseUrl": "http://demo-prod.example.com" }
+      ]
+    }
+  ]
+}

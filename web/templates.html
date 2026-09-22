@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>URL 模板 — Multi-Service Invoker</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/style.css" />
+<script>/* 被 / 页用 iframe 嵌入时隐藏自带导航，避免重复 */
+if(window.self !== window.top) document.documentElement.classList.add("embed");</script>
+</head>
+<body>
+<header>
+  <h1>Multi-Service Invoker</h1>
+  <nav>
+    <a href="/">调用</a>
+    <a href="/services">调用项定义</a>
+    <a href="/platforms">节点列表</a>
+    <a href="/templates" class="on">URL 模板</a>
+  </nav>
+</header>
+
+<main>
+  <div class="banner err" id="banner" hidden></div>
+
+  <section class="card">
+    <h2>URL 模板
+      <span style="flex:1"></span>
+      <button class="btn" id="addProfile">+ 新建模板</button>
+      <button class="btn primary" id="save">保存模板</button>
+    </h2>
+    <div class="hintline">按标签匹配 → 决定调用项在节点上的完整 URL。同一个调用项在不同节点上调用时，按此规则自动拼接 URL。</div>
+
+    <div class="fieldtable">
+      <table>
+        <thead><tr>
+          <th style="width:19%">模板名称</th>
+          <th style="width:13%">上下文</th>
+          <th style="width:15%">节点标签</th>
+          <th style="width:13%">适用环境</th>
+          <th style="width:7%">优先级</th>
+          <th>URL 模板</th>
+          <th style="width:118px">操作</th>
+        </tr></thead>
+        <tbody id="profileRows"></tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:18px">
+      <div style="font-size:13px;font-weight:600;color:#3d4c61;margin-bottom:6px">URL 预览</div>
+      <div style="margin-top:10px;padding:12px;background:#f5f8fd;border-radius:8px">
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <div class="field" style="min-width:230px;flex:1">
+            <label>节点</label>
+            <select id="pvPlatform"></select>
+          </div>
+          <div class="field" style="min-width:190px;flex:1">
+            <label>调用项</label>
+            <select id="pvService"></select>
+          </div>
+        </div>
+        <div id="pvResults" class="mono" style="font-size:12px;color:#3d4c61"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div style="font-size:13px;font-weight:600;color:#3d4c61;margin-bottom:6px">占位符说明</div>
+      <div style="margin-top:10px;padding:12px;background:#f5f8fd;border-radius:8px;font-size:12.5px;line-height:1.7;color:#3d4c61">
+        <b>匹配条件怎么写</b>
+        <ul style="margin:6px 0 0 18px">
+          <li><b>节点标签</b>：写在这里的词必须出现在节点的标签里（例如 <code>标签A</code>）</li>
+          <li><b>环境</b>：写在这里的词必须等于当前地址条目的环境（例如 <code>环境X</code>）</li>
+          <li>两类都满足才命中；某一类不写＝该类不限制；两类都不写＝所有节点、所有环境通用</li>
+        </ul>
+        <b style="display:block;margin-top:10px">URL 模板支持以下占位符（按需选用）：</b>
+        <ul style="margin:6px 0 0 18px">
+          <li><code>{baseUrl}</code> — 当前地址条目的根地址（来自「节点列表」）</li>
+          <li><code>{context}</code> — 本模板「上下文」字段的值</li>
+          <li><code>{module}</code> — 应用模块名（调用项里配置的默认应用模块）</li>
+          <li><code>{serviceCode}</code> — 调用项编码</li>
+          <li><code>{env}</code> / <code>{endpointTags}</code> — 当前地址条目的环境</li>
+          <li><code>{platformCode}</code> / <code>{platformName}</code> — 节点的编码 / 完整名称</li>
+        </ul>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<script src="/common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let PROFILES = [];
+let ENV_TAGS = [];        // 地址条目上出现过的标签 → 「适用环境」下拉选项
+let PLATFORM_TAGS = [];   // 域名自身用过的标签     → 「标签」下拉选项
+let PLATFORMS = [];
+let SERVICES = [];
+
+function note(html, kind){ showNote($("banner"), html, kind || "ok"); }
+
+/* 当前编辑中的模板（结构：{name, context, matchTags, priority, urlTemplate}） */
+function emptyProfile(){
+  return {name: "", context: "", matchTags: [], priority: 0, urlTemplate: ""};
+}
+
+function placeholderProfile(){
+  return {name: "新模板", context: "v1", matchTags: [], priority: 0,
+          urlTemplate: "{baseUrl}/{context}/{serviceCode}"};
+}
+
+/* matchTags 在界面上就是「标签（最多一个）+ 适用环境（最多一个）」，两个都是下拉。
+   这里只做拆分/合并，不再保留任何「额外标签」——
+   否则选项列表还没加载（ENV_TAGS 为空）时会把所有标签误判成域名标签再合并回去。 */
+function splitMatchTags(tags){
+  const list = tags || [];
+  return {
+    env:  list.find(t => ENV_TAGS.includes(t)) || "",
+    plat: list.find(t => !ENV_TAGS.includes(t)) || "",
+  };
+}
+function joinMatchTags(env, plat){
+  return [plat, env].filter(Boolean);
+}
+
+/* 下拉选项：已有值 + 当前值（防止历史数据里的词不在列表里而显示为空） */
+function optionsHtml(values, current, labels){
+  const all = values.slice();
+  if(current && !all.includes(current)) all.push(current);
+  const blank = `<option value="">不限</option>`;
+  return blank + all.map(v =>
+    `<option value="${escapeHtml(v)}"${v === current ? " selected" : ""}>${escapeHtml(labels && labels[v] || v)}</option>`
+  ).join("");
+}
+
+function renderRows(){
+  if(!PROFILES.length){
+    $("profileRows").innerHTML = `<tr><td colspan="7" class="empty">还没有模板，点「+ 新建模板」</td></tr>`;
+    return;
+  }
+  $("profileRows").innerHTML = PROFILES.map((p, i) => {
+    const tagInfo = splitMatchTags(p.matchTags);
+    return `<tr data-i="${i}">
+      <td><input class="fName" value="${escapeHtml(p.name || "")}" placeholder="模板名称" /></td>
+      <td><input class="fContext" value="${escapeHtml(p.context || "")}" placeholder="固定值 或 &lt;module&gt;" /></td>
+      <td><select class="fPlatTag">${optionsHtml(PLATFORM_TAGS, tagInfo.plat)}</select></td>
+      <td><select class="fEnvTag">${optionsHtml(ENV_TAGS, tagInfo.env)}</select></td>
+      <td><input class="fPriority" type="number" value="${p.priority || 0}" style="width:60px" /></td>
+      <td><input class="fTpl" value="${escapeHtml(p.urlTemplate || "")}"
+          placeholder="{baseUrl}/{context}/service/{serviceCode}" style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px" /></td>
+      <td>
+        <button class="btn mini" data-up="${i}" title="上移">▲</button>
+        <button class="btn mini" data-down="${i}" title="下移">▼</button>
+        <button class="btn danger mini" data-del="${i}">删</button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  $("profileRows").querySelectorAll("tr[data-i]").forEach(tr => {
+    const i = +tr.dataset.i;
+    tr.querySelector(".fName").oninput = e => { PROFILES[i].name = e.target.value; refreshPreview(); };
+    tr.querySelector(".fContext").oninput = e => { PROFILES[i].context = e.target.value; refreshPreview(); };
+    tr.querySelector(".fPriority").oninput = e => {
+      const n = parseInt(e.target.value, 10);
+      PROFILES[i].priority = isNaN(n) ? 0 : n;
+      refreshPreview();
+    };
+    tr.querySelector(".fTpl").oninput = e => { PROFILES[i].urlTemplate = e.target.value; refreshPreview(); };
+
+    // 标签：从已有域名标签里选（写回 matchTags 的非环境部分）
+    const apply = () => {
+      // 选项还没加载好时不改写，避免把标签分类错
+      if(!ENV_TAGS.length && !PLATFORM_TAGS.length) return;
+      PROFILES[i].matchTags = joinMatchTags(
+        tr.querySelector(".fEnvTag").value,
+        tr.querySelector(".fPlatTag").value);
+      refreshPreview();
+    };
+    tr.querySelector(".fPlatTag").onchange = apply;
+    tr.querySelector(".fEnvTag").onchange = apply;
+
+    tr.querySelector("[data-up]").onclick = () => {
+      if(i === 0) return;
+      [PROFILES[i-1], PROFILES[i]] = [PROFILES[i], PROFILES[i-1]];
+      renderRows(); refreshPreview();
+    };
+    tr.querySelector("[data-down]").onclick = () => {
+      if(i >= PROFILES.length - 1) return;
+      [PROFILES[i+1], PROFILES[i]] = [PROFILES[i], PROFILES[i+1]];
+      renderRows(); refreshPreview();
+    };
+    tr.querySelector("[data-del]").onclick = () => {
+      PROFILES.splice(i, 1); renderRows(); refreshPreview();
+    };
+  });
+  refreshPreview();
+}
+
+/* ---------------------------------------------- URL 预览：域名 + 服务（默认列出全部环境） */
+function fillPreviewSelects(){
+  $("pvPlatform").innerHTML = PLATFORMS.map(p =>
+    `<option value="${escapeHtml(p.code)}">${escapeHtml(p.shortName || p.name || p.code)}（${escapeHtml(p.code)}）</option>`).join("");
+  $("pvService").innerHTML = SERVICES.map(s =>
+    `<option value="${escapeHtml(s.code)}">${escapeHtml(s.code)}${s.name ? " — " + escapeHtml(s.name) : ""}</option>`).join("");
+}
+
+/* 选域名 + 服务 → 向服务端要每个地址条目的最终 URL
+   （不选环境，默认把该域名下所有环境的地址都列出来，复用 runner 的真实解析逻辑） */
+async function refreshPreview(){
+  const platform = $("pvPlatform").value;
+  const service = $("pvService").value;
+  if(!platform || !service){
+    $("pvResults").innerHTML = `<div class="empty">选好域名与服务后，这里列出每个地址条目的 URL</div>`;
+    return;
+  }
+  $("pvResults").innerHTML = `<div class="empty">解析中…</div>`;
+  let data;
+  try{
+    data = await postJSON("/api/url-preview", {platform, service});
+  }catch(err){
+    $("pvResults").innerHTML = `<div style="color:#d33b3b">解析失败：${escapeHtml(err.message || String(err))}</div>`;
+    return;
+  }
+  const rows = data.items.map(it => {
+    const label = (it.endpointTags || []).join(" · ") || "（无标签）";
+    const val = it.url
+      ? `<span style="color:#1a5fd0;word-break:break-all">${escapeHtml(it.url)}</span>`
+      : `<span style="color:#c77700">${escapeHtml(it.error || "无 URL")}</span>`;
+    return `<div style="padding:5px 0;border-bottom:1px dashed #e3e8f1">
+      <span style="display:inline-block;min-width:96px;color:#566682">${escapeHtml(label)}</span>
+      <span style="color:#8a94a6;font-size:11px">${escapeHtml(it.profile || "-")}</span>
+      <div style="margin-left:96px">${val}</div>
+    </div>`;
+  }).join("");
+  $("pvResults").innerHTML = rows || `<div class="empty">这个域名下没有地址条目</div>`;
+}
+
+async function boot(){
+  const [rp, rs] = await Promise.all([
+    fetch(apiUrl("/api/platforms")), fetch(apiUrl("/api/services")),
+  ]);
+  if(!rp.ok) throw new Error(`HTTP ${rp.status} ${rp.statusText}`);
+  const dp = await rp.json();
+  const ds = rs.ok ? await rs.json() : {services: []};
+  PROFILES = JSON.parse(JSON.stringify(dp.contextProfiles || []));
+  ENV_TAGS = dp.endpointTags || [];
+  PLATFORM_TAGS = dp.platformTags || [];
+  PLATFORMS = dp.platforms || [];
+  SERVICES = ds.services || [];
+  fillPreviewSelects();
+  renderRows();
+}
+
+async function save(){
+  // 客户端预校验：name / urlTemplate 不能空
+  for(let i = 0; i < PROFILES.length; i++){
+    const p = PROFILES[i];
+    if(!p.name || !p.name.trim()){
+      note("存在模板名称为空的行，请先填写或删除", "err"); return;
+    }
+    if(!p.urlTemplate || !p.urlTemplate.trim()){
+      note(`模板「${p.name}」的 URL 模板不能为空`, "err"); return;
+    }
+  }
+  try{
+    const data = await postJSON("/api/context-profiles/save", {profiles: PROFILES});
+    PROFILES = JSON.parse(JSON.stringify(data.profiles || PROFILES));
+    renderRows();
+    showToast({text: `已保存 ${PROFILES.length} 个 URL 模板`});
+  }catch(err){
+    note("<b>保存失败：</b>" + escapeHtml(err.message || String(err)), "err");
+  }
+}
+
+function bind(){
+  $("addProfile").onclick = () => {
+    PROFILES.push(placeholderProfile());
+    renderRows();
+    // 焦点跳到新增行的名称输入框
+    const last = $("profileRows").querySelector(`tr[data-i="${PROFILES.length - 1}"] .fName`);
+    if(last){ last.focus(); last.select(); }
+  };
+  $("save").onclick = save;
+  $("pvPlatform").onchange = refreshPreview;
+  $("pvService").onchange = refreshPreview;
+}
+
+boot().catch(err => note("<b>加载失败：</b>" + escapeHtml(err.message || String(err)) +
+  "<br>请确认 <code>python3 query.py serve</code> 正在运行，并通过 <code>http://127.0.0.1:8765/templates</code> 访问本页。", "err"));
+bind();
+</script>
+</body>
+</html>

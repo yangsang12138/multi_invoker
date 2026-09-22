@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=多服务调用器
+Name[en]=Multi-Service Invoker
+Comment=多服务调用器：本地编排多个外部系统的接口调用
+Comment[en]=Local call orchestrator for multiple systems and services
+Exec=multi-invoker-launch
+Terminal=false
+Categories=Development;Utility;
+Keywords=api;http;query;invoker;
+StartupNotify=true
