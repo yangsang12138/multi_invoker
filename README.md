@@ -10,6 +10,27 @@
 
 ---
 
+## 0. 直接下载（不想自己构建）
+
+到 [**Releases**](https://github.com/yangsang12138/multi_invoker/releases/latest) 页面下载对应平台的包：
+
+| 平台 | 文件 | 用法 |
+| --- | --- | --- |
+| **macOS** | `Multi-Service-Invoker-<版本>-macos.zip` | 解压后双击 `Multi-Service Invoker.app`，关窗即退 |
+| **Windows** | `Multi-Service-Invoker-<版本>-windows.zip` | 解压后双击 `multi-invoker.bat` |
+| **Linux** | `Multi-Service-Invoker-<版本>-linux.tar.gz` | `chmod +x multi-invoker && ./multi-invoker serve` |
+| **通用** | `multi-invoker-<版本>.pyz` | 任何装有 Python 3.9+ 的系统 |
+
+每个包内附该平台的简短说明；`SHA256SUMS.txt` 可用于校验下载完整性。
+
+> ⚠️ **前提：目标机器需要 Python 3.9+**。本工具零第三方依赖，但打包形态是 Python zipapp，
+> **不内嵌解释器**。Windows 安装 Python 时请勾选「Add Python to PATH」。
+>
+> macOS 首次打开若被 Gatekeeper 拦下，右键点 App → 打开；或执行
+> `xattr -cr "Multi-Service Invoker.app"`。
+
+---
+
 ## 1. 启动方式速查
 
 | 场景 | 命令 / 操作 | 适合 |
